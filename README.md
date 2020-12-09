@@ -7,6 +7,7 @@
   - [ ] dont update pre$ versions
 - [ ] git support
   - [ ] --commit 
+  - [ ] option to not sign commits
   - [ ] --dry-run for testing
   - check that branch is not master
 - corner cases
