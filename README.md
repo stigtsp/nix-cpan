@@ -1,4 +1,4 @@
-# nix-update-perl-packages
+# nix-update-cpan
 
 ## TODO
 - [X] versions (use Sort::Versions)
