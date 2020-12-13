@@ -23,11 +23,12 @@ use experimental 'signatures';
 
 version 0.01;
 
-option file    => "nix_file" => "Path to .nix file to update";
+option file    => "nix_file" => "Path to perl-packages.nix file to update";
 option string  => "attr"     => "Name of single attr to update";
+
 option bool  => "commit"    => "Create one commit per update (implies --inplace)" => 0;
-option bool  => "inplace"   => "Modify .nix file inplace, without committing" => 0;
-option bool  => "verbose"   => "Show changes and determinations being made" => 0;
+option bool  => "inplace"   => "Modify .nix file inplace" => 0;
+#option bool  => "verbose"   => "Show changes and determinations being made" => 0;
 
 
 our $ua = new HTTP::Tiny::Cache ( agent => 'nix-update-perl-packages/0.01' );
@@ -55,14 +56,13 @@ app {
         }
     }
 
-    warn "Got ".scalar(@modules)." releases to update";
-
     if ($app->commit) {
         git_sanity($nix_file);
     }
 
     for my $module (@modules) {
-        die "Woops? No new or old code" unless $module->{old_code} && $module->{new_code};
+        die "$module->{attrname}: Woops? No new or old code" unless $module->{old_code} && $module->{new_code};
+        die "$module->{attrname}: Woops? No new or old version" unless $module->{old_version} && $module->{new_version};
         if ($app->inplace || $app->commit) {
             #git_sanity($nix_file) if ($app->commit); # Maybe a bit excessive to
                                                       # check this before every
@@ -71,7 +71,9 @@ app {
             $newnix =~ s/\Q$module->{old_code}\E/$module->{new_code}/gs;
             Mojo::File->new($nix_file)->spurt($newnix);
             if ($app->commit) {
-                git_commit($nix_file, "perlPackages.$module->{attrname}: $module->{old_version} -> $module->{new_version}");
+                git_commit($nix_file,
+                           "[nix-update-cpan] perlPackages.$module->{attrname}: "
+                             . "$module->{old_version} -> $module->{new_version}");
             }
         }
 
@@ -88,7 +90,7 @@ sub git_sanity ($nix_file) {
     push @err, "* $nix_file is not clean, maybe it has uncommitted changes?\n"
       if $file_status || $?;
 
-    die join("", @err) if @err;
+    die "git_sanity error:\n".join("", @err) if @err;
 }
 
 sub git_commit ($nix_file, $message) {
@@ -157,16 +159,6 @@ sub get_release ($release) { # MetaCPAN::Client doesn't want to return
     $ret->{version} =~ s/^v//;
     $ret->{download_url} =~ s|^https://cpan.metacpan.org/|mirror://cpan/|;
     return $ret;
-}
-
-sub get_download_url ($module) {
-    my $url = "https://fastapi.metacpan.org/v1/download_url/$module";
-    my $res = HTTP::Tiny::Cache->new->get($url);
-    die "$res->{status} $res->{reason}: $url" unless $res->{success};
-    my $download = decode_json($res->{content});
-    $download->{version} =~ s/^v//;
-    $download->{download_url} =~ s|^https://cpan.metacpan.org/|mirror://cpan/|;
-    return $download;
 }
 
 sub get_attr ($text, $attr) {
