@@ -11,7 +11,6 @@
 #
 
 
-
 use v5.34;
 
 use strict;
@@ -46,16 +45,26 @@ version $VERSION;
 
 
 # TODO: option to control caching
-option file    => "nix_file" => "Path to perl-packages.nix file to update";
-option string  => "attr"     => "Name of single attr to update";
+
 ## option string  => "git_opts" => "Options to pass to git";
-option string  => "generate" => "Name of Perl distribution to generate";
 
-option bool  => "commit"     => "Create one commit per update (implies --inplace)" => 0;
-option bool  => "inplace"    => "Modify .nix file inplace" => 0;
+option bool    => "generate"     => "Generate a derivation, print it";
+option string  => "distribution" => "generate: Name of Perl distribution to generate";
+option string  => "module"       => "generate: Name of Perl module in distribution to generate";
 
-option bool  => "verbose"    => "Show changes and determinations being made" => 0;
-option bool  => "debug"      => "Output debug information" => 0;
+option bool    => "update"       => "Update perlPackages in nix-file";
+option file    => "nix_file"     => "update: Path to perl-packages.nix file to update";
+option string  => "attr"         => "update: Name of single attr to update";
+option bool    => "commit"       => "update: Create one commit per update (implies --inplace)" => 0;
+option bool    => "inplace"      => "update: Modify nix-file inplace" => 0;
+
+option bool    => "add-deps"     => "Also add new dependencies if they don't already exist";
+option bool    => "debug"        => "Output debug information" => 0;
+
+
+
+#option bool  => "verbose"    => "Show changes and determinations being made" => 0;
+
 
 our $ua = new HTTP::Tiny::Cache ( agent => "nix-update-perl-packages/$VERSION" );
 
@@ -65,18 +74,24 @@ app {
     my $app = shift;
 
     # XXX: Should be a better way to do this
-    $VERBOSE = $app->verbose;
+ ###   $VERBOSE = $app->verbose;
     $ENV{Smart_Comments} = $DEBUG = $app->debug ;
 
-    $app->generate && return $app->run_generate;
+    $app->generate && exit $app->run_generate;
+    $app->update && exit $app->run_update;
+};
+
+
+sub run_update ($app) {
 
     unless ($app->nix_file) {
         $app->_script->print_help;
         return 0;
     }
 
+
     my $nix_file = $app->nix_file;
-    ### nix_file: $nix_file
+    ### Updating: $nix_file
 
     die "no .nix file provided" unless -f $nix_file;
     my $nix = Mojo::File->new($nix_file)->slurp;
@@ -91,18 +106,16 @@ app {
     }
 
     if ($app->commit) {
+        ### Checking git_sanity
         git_sanity($nix_file);
     }
 
-    for my $module (@modules) { ### Looping over modules [|||   ]
+    for my $module (@modules) { ### Looping over modules [|||  ]
         for (qw[code version]) {
             die "$module->{attrname}: Woops? No new or old $_"
               unless $module->{"old_$_"} && $module->{"new_$_"};
         }
         if ($app->inplace || $app->commit) {
-            #git_sanity($nix_file) if ($app->commit); # Maybe a bit excessive to
-                                                      # check this before every
-                                                      # commit
             my $newnix = Mojo::File->new($nix_file)->slurp;
             $newnix =~ s/\Q$module->{old_code}\E/$module->{new_code}/gs;
             Mojo::File->new($nix_file)->spurt($newnix);
@@ -114,22 +127,34 @@ app {
         }
 
     }
-};
+}
 
 sub module_to_distr($module_name) {
     my $module = get_module($module_name);
-    ### module: $module_name
-    ### distribution: $module->{distribution}
     return get_release($module->{distribution});
 }
 
 sub run_generate ($app) {
+    ### Generate
     my $arg = $app->generate;
-    ### run_xgenerate: $arg
-    my $m = get_release($arg);
-    ### got distribution: $m->{distribution}
+    my $m;
+    if (my $distr = $app->distribution) {
+        ### Looking up distribution: $distr
+        $m = get_release($distr);
+    } elsif (my $module = $app->module) {
+        ### Looking up module: $module
+        my $mod = get_module($module);
+        ### Looking up distribution: $mod->{distribution}
+        $m = get_release($mod->{distribution});
+    } else {
+        die;
+    }
+    
+    ### Ended up with distribution: $m->{distribution}
 
     my $attr = distr_name_to_attr($m->{distribution});
+
+    ### Attribute: $attr
 
     my $get_deps = sub {
         my ($rels, $phases) = @_;
@@ -357,6 +382,7 @@ sub set_attr($text, $attr, $val) {
 
 sub distr_name_to_attr ($distr) {
     # Converts perl ditribution or module names to nix attribute
+    die "no \$distr" unless $distr;
     $distr=~ s/[:-]//g;
     return $distr;
 }
