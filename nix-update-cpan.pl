@@ -2,23 +2,31 @@
 #! nix-shell -i perl -p perl perlPackages.Applify perlPackages.RegexpCommon perlPackages.Mojolicious perlPackages.SmartComments perlPackages.MetaCPANClient perlPackages.SortVersions perlPackages.HTTPTinyCache perlPackages.TryTiny perlPackages.TextDiff perlPackages.Perl6Junction
 
 #
-# Typical usage:
+# Generate derivation:
+#  nix-update-cpan.pl --generate HTML-FormHandler --verbose
+#
+# Update nix files:
 #   git checkout -b nix-update-perl/$(date +%s`)
-#   nix-update-perl-packages.pl --nix-file pkgs/top-level/perl-packages.nix --commit
+#   nix-update-cpan.pl --nix-file pkgs/top-level/perl-packages.nix --commit
 #
 
-use strict;
+
+
 use v5.34;
 
-use experimental 'signatures';
-use feature 'try';
-use warnings qw(all -experimental);
+use strict;
+use warnings;
+
+no warnings "experimental::signatures";
+no warnings "experimental::try";
+use feature qw(signatures try);
+
 
 use Data::Dumper;
 use HTTP::Tiny::Cache;
 use Regexp::Common;
 use Text::Diff;
-use Smart::Comments;
+use Smart::Comments -ENV;
 
 use Sort::Versions;
 use Mojo::File;
@@ -62,7 +70,6 @@ app {
 
     $app->generate && return $app->run_generate;
 
-    
     unless ($app->nix_file) {
         $app->_script->print_help;
         return 0;
@@ -109,35 +116,79 @@ app {
     }
 };
 
+sub module_to_distr($module_name) {
+    my $module = get_module($module_name);
+    ### module: $module_name
+    ### distribution: $module->{distribution}
+    return get_release($module->{distribution});
+}
+
 sub run_generate ($app) {
     my $arg = $app->generate;
     ### run_xgenerate: $arg
     my $m = get_release($arg);
     ### got distribution: $m->{distribution}
 
+    my $attr = distr_name_to_attr($m->{distribution});
+
     my $get_deps = sub {
-        my ($relationship_re, $phase_re) = @_;
-        my @deps = grep { $_->{phase} =~ $phase_re
-                            && $_->{relationship} =~ $relationship_re }
-          @{ $m->{dependency} || [] };
-        my @r = grep { !Module::CoreList::is_core($_->{module}) } @deps;
-        return @r;
+        my ($rels, $phases) = @_;
+
+        my @deps = grep {
+            $_->{phase} eq one(@$phases)
+              && $_->{relationship} eq one(@$rels)
+              && $_->{module} eq none(qw(perl))
+          } @{$m->{dependency}};
+
+        my @distr =
+          grep {
+              !Module::CoreList::is_core($_->{main_module})
+          } map { module_to_distr($_->{module} ) }  @deps;
+
+
+
+        return @distr;
+
     };
 
+    my @build_deps = $get_deps->( [qw(requires)], [qw(configure build test)] );
+    my @runtime_deps = $get_deps->( [qw(requires)], [qw(runtime)] );
 
-
-    $m->{build_inputs} = [ uniq sort map { distr_name_to_attr($_->{module}) } $get_deps->( qr/^requires$/, qr/^(configure|build|test)$/ ) ];
-    $m->{propagated_build_inputs} = [ grep { none(@{$m->{build_inputs}}) eq $_ } uniq sort map { distr_name_to_attr($_->{module}) } $get_deps->( qr/^requires$/, qr/^runtime$/ ) ];
-
-    my $build_fun = one(@{$m->{build_inputs}}) eq "ModuleBuild"
+    my $build_fun = ( grep { $_->{module} eq 'Module::Build' } @build_deps )
       ? "buildPerlModule" : "buildPerlPackage";
 
-    ### build_fun: $build_fun
+    ### build_deps: @build_deps
+    ### runtime deps: @runtime_deps
+    $m->{build_inputs} = [
+        uniq sort
+        map { distr_name_to_attr($_->{distribution}) }
+        grep { $_->{module} ne one(qw(Module::Build)) }
+        @build_deps
+    ];
 
-    ### buildi: $m->{build_inputs}
+    $m->{propagated_build_inputs} = [
+        uniq sort
+        grep { none(@{$m->{build_inputs}}) eq $_ }
+        map { distr_name_to_attr($_->{distribution}) }
+        @runtime_deps
+    ];
+
+    my (@exists, @missing);
+    foreach my $dep (@{$m->{build_inputs}}, @{$m->{propagated_build_inputs}}) {
+        if (exists_in_nixpkgs($dep)) {
+            push @exists, $dep;
+        } else {
+            push @missing, $dep;
+        }
+    }
+
+    my $code = generate_module($m, $attr, $build_fun);
+
+    ### exists: @exists
+    ### missing: @missing
 
 
-    die generate_module($m, distr_name_to_attr($m->{distribution}), $build_fun);
+    print $code;
 }
 
 sub git_sanity ($nix_file) {
@@ -197,7 +248,7 @@ sub parse_module ($attrname, $build_fun, $part) {
         my $code = set_attrs($part,
                              version => $cpan->{version},
                              url     => $cpan->{download_url},
-                             sha256  => sha256_to_base32($cpan->{checksum_sha256})
+                             sha256  => sha256_hex_to_base32($cpan->{checksum_sha256})
                          );
 
         $m->{old_version} = $m->{version};
@@ -218,16 +269,17 @@ sub parse_module ($attrname, $build_fun, $part) {
 sub generate_module ($m, $attr_name, $build_fun) {
     my $attr     = attr_is_reserved($attr_name) ? "\"$attr_name\"" : $attr_name;
     my $license  = render_license($m->{license}->[0]);
+    my $sha256 = sha256_hex_to_base32($m->{checksum_sha256});
     ### license: $license;
     ### attr: $attr
-    return Mojo::Template->new->render(<<'EOF', $build_fun, $attr, $m, $license);
-% my ($build_fun, $attr, $m, $license) = @_;
+    return Mojo::Template->new->render(<<'EOF', $build_fun, $attr, $m, $license, $sha256);
+% my ($build_fun, $attr, $m, $license, $sha256) = @_;
   <%= $attr %> = <%= $build_fun %> {
     pname = "<%= $m->{distribution} %>";
     version = "<%= $m->{version} %>";
     src = fetchurl {
       url = "<%= $m->{download_url} %>";
-      sha256 = "<%= $m->{checksum_sha256} %>";
+      sha256 = "<%= $sha256 %>";
     };
 % if (my @b = @{$m->{build_inputs} || [] }) {
     buildInputs = [ <%= join ' ', @b %> ];
@@ -308,10 +360,15 @@ sub distr_name_to_attr ($distr) {
     $distr=~ s/[:-]//g;
     return $distr;
 }
-sub sha256_to_base32 ($hex) {
+sub sha256_hex_to_base32 ($hex) {
     die "not hex" unless $hex=~/^[a-f0-9]{64}$/;
     chomp(my $ret=qx(nix-hash --type sha256 --to-base32 $hex));
     return $ret;
+}
+
+sub exists_in_nixpkgs ($attr) {
+    chomp(my $ret = qx(nix-instantiate --eval -E '(import <nixpkgs> {}).perlPackages.$attr.pname'));
+    return $ret =~ m/\".+\"/; #XXX: This should be better...
 }
 
 ##
