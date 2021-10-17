@@ -1,5 +1,5 @@
 #! /usr/bin/env nix-shell
-#! nix-shell -i perl -p "perl.withPackages(p: with p; [ Applify RegexpCommon Mojolicious SmartComments SortVersions HTTPTinyCache TextDiff Perl6Junction Log4Perl ])"
+#! nix-shell -i perl -p "with perl.pkgs; [ perl Applify RegexpCommon Mojolicious SmartComments SortVersions HTTPTinyCache TextDiff Perl6Junction Log4Perl IOSocketSSL ]"
 
 # Work in progress :-) Run this in the root of your nixpkgs checkout.
 #
@@ -446,7 +446,7 @@ sub get_metacpan_api($path) {
     my $res = $ua->get($url);
     my $log = "GET $url ($res->{status} $res->{reason})";
     DEBUG($log);
-    die $log unless $res->{success};
+    die "$log\n$res->{content}" unless $res->{success};
     my $ret = decode_json($res->{content});
     return $ret;
 }
