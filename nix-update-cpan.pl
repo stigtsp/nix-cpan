@@ -1,5 +1,5 @@
 #! /usr/bin/env nix-shell
-#! nix-shell -i perl -p perl perlPackages.Applify perlPackages.RegexpCommon perlPackages.Mojolicious perlPackages.SmartComments perlPackages.MetaCPANClient perlPackages.SortVersions perlPackages.HTTPTinyCache perlPackages.TryTiny perlPackages.TextDiff perlPackages.Perl6Junction perlPackages.Log4Perl
+#! nix-shell -i perl -p "perl.withPackages(p: with p; [ Applify RegexpCommon Mojolicious SmartComments SortVersions HTTPTinyCache TextDiff Perl6Junction Log4Perl ])"
 
 # Work in progress :-) Run this in the root of your nixpkgs checkout.
 #
