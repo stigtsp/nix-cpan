@@ -137,22 +137,22 @@ sub module_to_distr($module_name) {
 sub run_generate ($app) {
     ### Generate
     my $arg = $app->generate;
-    my $m;
+    my $distro;
     if (my $distr = $app->distribution) {
         ### Looking up distribution: $distr
-        $m = get_release($distr);
+        $distro = get_release($distr);
     } elsif (my $module = $app->module) {
         ### Looking up module: $module
         my $mod = get_module($module);
         ### Looking up distribution: $mod->{distribution}
-        $m = get_release($mod->{distribution});
+        $distro = get_release($mod->{distribution});
     } else {
         die;
     }
     
-    ### Ended up with distribution: $m->{distribution}
+    ### Ended up with distribution: $distro->{distribution}
 
-    my $attr = distr_name_to_attr($m->{distribution});
+    my $attr = distr_name_to_attr($distro->{distribution});
 
     ### Attribute: $attr
 
@@ -163,7 +163,7 @@ sub run_generate ($app) {
             $_->{phase} eq one(@$phases)
               && $_->{relationship} eq one(@$rels)
               && $_->{module} eq none(qw(perl))
-          } @{$m->{dependency}};
+          } @{$distro->{dependency}};
 
         my @distr =
           grep {
@@ -184,22 +184,22 @@ sub run_generate ($app) {
 
     ### build_deps: @build_deps
     ### runtime deps: @runtime_deps
-    $m->{build_inputs} = [
+    $distro->{build_inputs} = [
         uniq sort
         map { distr_name_to_attr($_->{distribution}) }
         grep { $_->{module} ne one(qw(Module::Build)) }
         @build_deps
     ];
 
-    $m->{propagated_build_inputs} = [
+    $distro->{propagated_build_inputs} = [
         uniq sort
-        grep { none(@{$m->{build_inputs}}) eq $_ }
+        grep { none(@{$distro->{build_inputs}}) eq $_ }
         map { distr_name_to_attr($_->{distribution}) }
         @runtime_deps
     ];
 
     my (@exists, @missing);
-    foreach my $dep (@{$m->{build_inputs}}, @{$m->{propagated_build_inputs}}) {
+    foreach my $dep (@{$distro->{build_inputs}}, @{$distro->{propagated_build_inputs}}) {
         if (exists_in_nixpkgs($dep)) {
             push @exists, $dep;
         } else {
@@ -207,7 +207,7 @@ sub run_generate ($app) {
         }
     }
 
-    my $code = generate_module($m, $attr, $build_fun);
+    my $code = generate_module($distro, $attr, $build_fun);
 
     ### exists: @exists
     ### missing: @missing
@@ -282,8 +282,7 @@ sub parse_module ($attrname, $build_fun, $part) {
         $m->{new_code} = $code;
         print(diff \$part, \$code) if $VERBOSE;
 
-
-        printf("%-30s | %8s | %8s \n", $m->{pname}, $m->{version}, $cpan->{version});
+        printf("%-30s | %8s | %8s \n", $m->{pname}, $m->{version}, $cpan->{version}) if $VERBOSE;
     } else {
         return;
     }
