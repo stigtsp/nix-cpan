@@ -381,7 +381,7 @@ sub update_derivation ($app, $attrname, $build_fun, $part) {
 
     my ($distro, @missing) = $app->generate_distro($cpan, 1);
     my $newer =($drv->{version} && $cpan->{version} && versioncmp($drv->{version}, $cpan->{version}) == -1);
-    if ($newer || $diff_deps) {
+    if ($newer) {
 
         my $code = set_attrs($part,
                              version => $cpan->{version},
