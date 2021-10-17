@@ -1,192 +1,290 @@
 #! /usr/bin/env nix-shell
-#! nix-shell -i perl -p perl perlPackages.Applify perlPackages.RegexpCommon perlPackages.Mojolicious perlPackages.SmartComments perlPackages.MetaCPANClient perlPackages.SortVersions perlPackages.HTTPTinyCache perlPackages.TryTiny perlPackages.TextDiff perlPackages.Perl6Junction
+#! nix-shell -i perl -p perl perlPackages.Applify perlPackages.RegexpCommon perlPackages.Mojolicious perlPackages.SmartComments perlPackages.MetaCPANClient perlPackages.SortVersions perlPackages.HTTPTinyCache perlPackages.TryTiny perlPackages.TextDiff perlPackages.Perl6Junction perlPackages.Log4Perl
 
+# Work in progress :-) Run this in the root of your nixpkgs checkout.
 #
-# Generate derivation:
-#  nix-update-cpan.pl --generate HTML-FormHandler --verbose
+# Generate derivation snippet:
+#   nix-update-cpan.pl --generate --distribution=HTML-FormHandler
 #
-# Update nix files:
-#   git checkout -b nix-update-perl/$(date +%s`)
-#   nix-update-cpan.pl --nix-file pkgs/top-level/perl-packages.nix --commit
+# Generate shell.nix file with dependencies:
+#   nix-update-cpan.pl --generate --shell --distribution=App-Presto --deps > shell.nix
 #
+# Update perl-packages.nix in place:
+#   nix-update-cpan.pl --update --inplace
+#
+# Update perl-packages.nix with nix-cpan commits:
+#   git checkout -b nix-update-perl/$(date +%s)
+#   nix-update-cpan.pl --update --commit
+#
+#
+# --verbose and --debug can be useful options
 
 
 use v5.34;
+use Applify;
 
 use strict;
 use warnings;
 
-no warnings "experimental::signatures";
-no warnings "experimental::try";
 use feature qw(signatures try);
-
+no warnings qw(experimental::signatures experimental::try);
 
 use Data::Dumper;
 use HTTP::Tiny::Cache;
+use File::Util::Tempdir;
 use Regexp::Common;
 use Text::Diff;
 use Smart::Comments -ENV;
 
 use Sort::Versions;
-use Mojo::File;
+
+use Mojo::File 'path';
 use Mojo::JSON 'decode_json';
 use Mojo::Template;
-use Applify;
 use List::Util 'uniq';
 use Perl6::Junction qw(one none);
 # use MetaCPAN::Client 2.029;
 
 use Module::CoreList;
 use Carp qw(croak);
+use Log::Log4perl qw(:easy);
 
 our $VERSION = 0.01;
+
+our $ERRATA = require(path(path(__FILE__)->dirname, "errata.conf"));
 
 version $VERSION;
 
 
-# TODO: option to control caching
 
 ## option string  => "git_opts" => "Options to pass to git";
 
-option bool    => "generate"     => "Generate a derivation, print it";
+
+option bool    => "list_nix_file"  => "Parses Nix file and prints attributes";
+
+option bool    => "generate"       => "Generate a derivation, print it";
+option bool    => "shell"          => "generate: Wrap output in a shell.nix skeleton";
+
 option string  => "distribution" => "generate: Name of Perl distribution to generate";
 option string  => "module"       => "generate: Name of Perl module in distribution to generate";
 
 option bool    => "update"       => "Update perlPackages in nix-file";
-option file    => "nix_file"     => "update: Path to perl-packages.nix file to update";
+
+
 option string  => "attr"         => "update: Name of single attr to update";
 option bool    => "commit"       => "update: Create one commit per update (implies --inplace)" => 0;
 option bool    => "inplace"      => "update: Modify nix-file inplace" => 0;
 
-option bool    => "add-deps"     => "Also add new dependencies if they don't already exist";
+option bool    => "deps"         => "Also add new dependencies if they don't already exist in nixpkgs";
+
 option bool    => "debug"        => "Output debug information" => 0;
+option bool    => "clear_cache"  => "Clear the cache used by HTTP::Tiny::Cache" => 0;
+option file    => "nix_file"       => "(optional) Path to perl-packages.nix" => "pkgs/top-level/perl-packages.nix";
 
-
-
-#option bool  => "verbose"    => "Show changes and determinations being made" => 0;
+option bool  => "verbose"    => "Show changes and determinations being made" => 0;
 
 
 our $ua = new HTTP::Tiny::Cache ( agent => "nix-update-perl-packages/$VERSION" );
 
-our ($VERBOSE, $DEBUG);
-
 app {
     my $app = shift;
+    Log::Log4perl->easy_init({
+            level =>  ($app->debug ? $DEBUG : ($app->verbose ? $INFO : undef)),
+            layout => '%m%n'
+        });
 
-    # XXX: Should be a better way to do this
- ###   $VERBOSE = $app->verbose;
-    $ENV{Smart_Comments} = $DEBUG = $app->debug ;
+    $app->http_tiny_clear_cache() if $app->clear_cache;
 
-    $app->generate && exit $app->run_generate;
-    $app->update && exit $app->run_update;
+    return $app->run_list_nix_file if $app->list_nix_file;
+    return $app->run_generate if $app->generate;
+    return $app->run_update if $app->update;
+    $app->_script->print_help;
+    return 1;
 };
 
+sub run_list_nix_file ($app) {
+    my @drvs = parse_nix_file($app->nix_file);
+    foreach (@drvs) {
+        print "$_->[1]\n";
+    }
+    return 0;
+}
+
+sub parse_nix_file($nix_file, $cb=undef) { # Parses a perl-packages.nix file
+
+    die "no .nix file provided" unless -f $nix_file;
+    my $nix = Mojo::File->new($nix_file)->slurp;
+
+    my (@ret);
+    while ($nix =~ m/((\w+)\s+=\s+buildPerl(Package|Module)\s+(?:rec)?\s*)
+                     ($RE{balanced}{-parens=>'{}'})/gx) {
+        my ($prepart, $attrname, $build_fun, $part) = ($1, $2, $3, $4);
+        if ($cb) {
+            push @ret, $cb->($prepart, $attrname, $build_fun, $part);
+        } else {
+            push @ret, [$prepart, $attrname, $build_fun, $part];
+        }
+    }
+    return grep { $_ } @ret;
+}
 
 sub run_update ($app) {
-
     unless ($app->nix_file) {
         $app->_script->print_help;
         return 0;
     }
 
+    my $write = $app->inplace || $app->commit;
 
     my $nix_file = $app->nix_file;
-    ### Updating: $nix_file
-
-    die "no .nix file provided" unless -f $nix_file;
-    my $nix = Mojo::File->new($nix_file)->slurp;
-
-    my (@modules);
-    while ($nix =~ m/((\w+)\s+=\s+buildPerl(Package|Module)\s+(?:rec)?\s*)
-                     ($RE{balanced}{-parens=>'{}'})/gx) {
-        my ($prepart, $attrname, $build_fun, $part) = ($1, $2, $3, $4);
+    INFO("# Updating derivations in $nix_file ".($write ? "WRITE" : "READONLY"));
+    my (@updated_drv, @missing);
+    foreach my $m (parse_nix_file($nix_file)) {
+        my ($prepart, $attrname, $build_fun, $part) = @$m;
         if (!$app->attr || $app->attr eq $attrname) {
-            push @modules, parse_module($attrname, $build_fun, $part);
+            my ($drv, @rest) = $app->update_derivation($attrname, $build_fun, $part);
+            if ($drv) {
+                push @updated_drv, $drv;
+                if (@rest) {
+                    push @missing, @rest;
+                }
+            } else {
+                WARN("No update for $attrname");
+            }
         }
     }
+
+
 
     if ($app->commit) {
         ### Checking git_sanity
         git_sanity($nix_file);
     }
 
-    for my $module (@modules) { ### Looping over modules [|||  ]
+
+    ### updated_drv: @updated_drv
+    for my $drv (@updated_drv) {
+        ### drv: $drv
+
         for (qw[code version]) {
-            die "$module->{attrname}: Woops? No new or old $_"
-              unless $module->{"old_$_"} && $module->{"new_$_"};
+            die "$drv->{attrname}: Woops? No new or old $_"
+              unless $drv->{"old_$_"} && $drv->{"new_$_"};
         }
-        if ($app->inplace || $app->commit) {
+        if ($write) {
             my $newnix = Mojo::File->new($nix_file)->slurp;
-            $newnix =~ s/\Q$module->{old_code}\E/$module->{new_code}/gs;
+            $newnix =~ s/\Q$drv->{old_code}\E/$drv->{new_code}/gs;
             Mojo::File->new($nix_file)->spurt($newnix);
             if ($app->commit) {
                 git_commit($nix_file,
-                           "[nix-cpan] perlPackages.$module->{attrname}: "
-                             . "$module->{old_version} -> $module->{new_version}");
+                           "[nix-cpan] perlPackages.$drv->{attrname}: "
+                             . "$drv->{old_version} -> $drv->{new_version}");
             }
         }
+    };
 
+
+
+    ### missing: @missing
+
+    for my $distro (@missing) {
+        if ($write) {
+            INFO("Adding distro $distro->{distribution}");
+            my $newnix = Mojo::File->new($nix_file)->slurp;
+            my $end_marker = "} // lib.optionalAttrs (config.allowAliases or true) {";
+            $newnix =~ s/\Q$end_marker\E/$distro->{code}\n\n$end_marker/gs;
+            my $attr = distro_name_to_attr($distro);
+            Mojo::File->new($nix_file)->spurt($newnix);
+            INFO("[nix-cpan] perlPackages.$attr: init at $distro->{version}");
+            #if ($app->commit) {
+                #git_commit($nix_file,
+                #           "[nix-cpan] perlPackages.$m->{attrname}: "
+                #             . "$drv->{old_version} -> $drv->{new_version}");
+            #}
+
+        }
     }
-}
 
-sub module_to_distr($module_name) {
-    my $module = get_module($module_name);
-    return get_release($module->{distribution});
+    return 0;
 }
 
 sub run_generate ($app) {
-    ### Generate
-    my $arg = $app->generate;
     my $distro;
-    if (my $distr = $app->distribution) {
-        ### Looking up distribution: $distr
-        $distro = get_release($distr);
+    if (my $dn = $app->distribution) {
+        INFO("Looking up distribution: $dn");
+        $distro = get_release($dn);
     } elsif (my $module = $app->module) {
-        ### Looking up module: $module
-        my $mod = get_module($module);
-        ### Looking up distribution: $mod->{distribution}
-        $distro = get_release($mod->{distribution});
+        INFO("Looking up distribution from module name: $module");
+        $distro = get_release_by_module_name($module);
     } else {
-        die;
+        die "generate: Missing either `--module=Foo::Bar` or `--distribution=Foo-Bar` option.";
     }
-    
-    ### Ended up with distribution: $distro->{distribution}
+    my (@distro_deps) = $app->generate_distro($distro, !!($app->deps));
+    $distro = shift(@distro_deps);
 
-    my $attr = distr_name_to_attr($distro->{distribution});
+    my $distro_name = $distro->{distribution};
 
-    ### Attribute: $attr
+    @distro_deps = unique_distros(@distro_deps);
 
-    my $get_deps = sub {
-        my ($rels, $phases) = @_;
+    my $attr = distro_name_to_attr($distro_name);
+    say <<EOT if $app->shell;
+with import <nixpkgs> { } ;
+with perlPackages;
+with lib;
+let
+EOT
+    INFO("### $distro_name ".(@distro_deps ? scalar(@distro_deps)." dependencies ": ""));
+    say $distro->{code};
+    foreach my $dep (@distro_deps) {
+        INFO("### dependency $dep->{distribution} ###");
+        say $dep->{code};
+    }
+    say <<EOT if $app->shell;
+in pkgs.mkShell {
+  buildInputs = [ $attr perl ];
+}
+EOT
+
+
+    return 0;
+}
+
+
+sub generate_distro ($app, $distro, $resolve_deps=0) {
+
+    my $distro_name = $distro->{distribution};
+    INFO("### $distro_name ###");
+    die "\resolve_deps level too high" if $resolve_deps > 5;
+    DEBUG("Ended up with distribution: $distro->{distribution}");
+
+    my $attr = distro_name_to_attr($distro_name);
+
+    my $get_deps = sub ($rels, $phases) { # Function for
+        #my ($rels, $phases) = @_;
 
         my @deps = grep {
             $_->{phase} eq one(@$phases)
               && $_->{relationship} eq one(@$rels)
               && $_->{module} eq none(qw(perl))
+              && $_->{module} eq none(@{$ERRATA->{ignore}->{module}})
           } @{$distro->{dependency}};
 
-        my @distr =
-          grep {
+        my @distros = grep {
               !Module::CoreList::is_core($_->{main_module})
-          } map { module_to_distr($_->{module} ) }  @deps;
+          } map { get_release_by_module_name($_->{module} ) } @deps;
 
-
-
-        return @distr;
-
+        return @distros;
     };
 
     my @build_deps = $get_deps->( [qw(requires)], [qw(configure build test)] );
     my @runtime_deps = $get_deps->( [qw(requires)], [qw(runtime)] );
 
-    my $build_fun = ( grep { $_->{module} eq 'Module::Build' } @build_deps )
+    # TODO: check that the distro has a Build.PL in project root
+    my $build_fun = ( grep { $_->{main_module} eq 'Module::Build' } @build_deps )
       ? "buildPerlModule" : "buildPerlPackage";
 
-    ### build_deps: @build_deps
-    ### runtime deps: @runtime_deps
     $distro->{build_inputs} = [
         uniq sort
-        map { distr_name_to_attr($_->{distribution}) }
+        map { distro_name_to_attr($_->{distribution}) }
         grep { $_->{module} ne one(qw(Module::Build)) }
         @build_deps
     ];
@@ -194,26 +292,40 @@ sub run_generate ($app) {
     $distro->{propagated_build_inputs} = [
         uniq sort
         grep { none(@{$distro->{build_inputs}}) eq $_ }
-        map { distr_name_to_attr($_->{distribution}) }
+        map { distro_name_to_attr($_->{distribution}) }
         @runtime_deps
     ];
 
     my (@exists, @missing);
-    foreach my $dep (@{$distro->{build_inputs}}, @{$distro->{propagated_build_inputs}}) {
-        if (exists_in_nixpkgs($dep)) {
-            push @exists, $dep;
-        } else {
-            push @missing, $dep;
+    if ($resolve_deps) {
+        foreach my $dep (@build_deps, @runtime_deps) {
+            if ($app->exists_in_nix_file(distro_name_to_attr($dep->{distribution}))) {
+                DEBUG("$dep->{distribution} exists in nixpkgs");
+                push @exists, $dep;
+            } else {
+                DEBUG("$dep->{distribution} is missing");
+                push @missing, $dep;
+            }
         }
+        $distro->{missing} = \@missing;
+        $distro->{exists}  = \@exists;
     }
 
-    my $code = generate_module($distro, $attr, $build_fun);
-
-    ### exists: @exists
-    ### missing: @missing
 
 
-    print $code;
+    my $code = generate_nix_derivation($distro, $attr, $build_fun);
+
+    $distro->{code} = $code;
+
+    if (@missing) {
+        INFO("$attr is missing dependencies: ".join(" ", map {$_->{distribution}} @missing));
+    }
+
+    my @rest;
+    foreach my $missing (@missing) {
+        push @rest, $app->generate_distro($missing, $resolve_deps+1);
+    }
+    return ($distro, @rest);
 }
 
 sub git_sanity ($nix_file) {
@@ -234,41 +346,42 @@ sub git_commit ($nix_file, $message) {
     (system(@git_cmd) == 0) or die "commit failed";
 }
 
-sub parse_module ($attrname, $build_fun, $part) {
-    my $m = {};
+sub update_derivation ($app, $attrname, $build_fun, $part) {
+    my $drv = {};
 
-    $m->{attrname} = $attrname;
+    $drv->{attrname} = $attrname;
 
-    $m->{url}     = get_attr($part, 'url');
-    $m->{pname}   = get_attr($part, 'pname');
-    $m->{version} = get_attr($part, 'version');
-    $m->{sha256}  = get_attr($part, 'sha256');
+    $drv->{url}     = get_attr($part, 'url');
+    $drv->{pname}   = get_attr($part, 'pname');
+    $drv->{version} = get_attr($part, 'version');
+    $drv->{sha256}  = get_attr($part, 'sha256');
 
-    $m->{build_fun} = $build_fun;
+    $drv->{build_fun} = $build_fun;
 
-    $m->{build_inputs} = [ get_attr_list($part, 'buildInputs') ];
-    $m->{propagated_build_inputs} = [ get_attr_list($part, 'propagatedBuildInputs') ];
+    $drv->{build_inputs} = [ get_attr_list($part, 'buildInputs') ];
+    $drv->{propagated_build_inputs} = [ get_attr_list($part, 'propagatedBuildInputs') ];
 
 
-    unless ($m->{url} =~ m|^mirror://cpan/|) {
+    unless ($drv->{url} =~ m|^mirror://cpan/|) {
         warn "skipping: $attrname \$url is not mirror://cpan";
         return;
     }
-    unless ($m->{pname} && $m->{url} && $m->{version} && $m->{sha256}) {
+    unless ($drv->{pname} && $drv->{url} && $drv->{version} && $drv->{sha256}) {
         warn "skipping: $attrname missing \$version, \$pname, \$url, or \$sha256";
         return;
     }
 
     my $cpan = {};
     try {
-        $cpan = get_release($m->{pname});
+        $cpan = get_release($drv->{pname});
     } catch ($e) {
         warn "skipping: $attrname $e";
         return;
     }
 
-
-    if ($m->{version} && $cpan->{version} && versioncmp($m->{version}, $cpan->{version}) == -1) {
+    my ($distro, @missing) = $app->generate_distro($cpan, 1);
+    my $newer =($drv->{version} && $cpan->{version} && versioncmp($drv->{version}, $cpan->{version}) == -1);
+    if ($newer || $diff_deps) {
 
         my $code = set_attrs($part,
                              version => $cpan->{version},
@@ -276,50 +389,53 @@ sub parse_module ($attrname, $build_fun, $part) {
                              sha256  => sha256_hex_to_base32($cpan->{checksum_sha256})
                          );
 
-        $m->{old_version} = $m->{version};
-        $m->{new_version} = $cpan->{version};
-        $m->{old_code} = $part;
-        $m->{new_code} = $code;
-        print(diff \$part, \$code) if $VERBOSE;
+        $drv->{old_version} = $drv->{version};
+        $drv->{new_version} = $cpan->{version};
 
-        printf("%-30s | %8s | %8s \n", $m->{pname}, $m->{version}, $cpan->{version}) if $VERBOSE;
+        $drv->{old_code} = $part;
+        $drv->{new_code} = $code;
+
+        INFO("# perlPackages.$drv->{attrname}: $drv->{version} -> $cpan->{version}");
+        INFO(diff \$part, \$code);
+
     } else {
         return;
     }
 
-    return $m;
+    return ($drv, @missing);
 }
 
-sub generate_module ($m, $attr_name, $build_fun) {
+sub generate_nix_derivation ($distro, $attr_name, $build_fun) {
     my $attr     = attr_is_reserved($attr_name) ? "\"$attr_name\"" : $attr_name;
-    my $license  = render_license($m->{license}->[0]);
-    my $sha256 = sha256_hex_to_base32($m->{checksum_sha256});
-    ### license: $license;
-    ### attr: $attr
-    return Mojo::Template->new->render(<<'EOF', $build_fun, $attr, $m, $license, $sha256);
-% my ($build_fun, $attr, $m, $license, $sha256) = @_;
+    my $license  = render_license($distro->{license}->[0]);
+    my $sha256 = sha256_hex_to_base32($distro->{checksum_sha256});
+
+    return Mojo::Template->new->render(<<'EOF', $build_fun, $attr, $distro, $license, $sha256);
+% my ($build_fun, $attr, $distro, $license, $sha256) = @_;
   <%= $attr %> = <%= $build_fun %> {
-    pname = "<%= $m->{distribution} %>";
-    version = "<%= $m->{version} %>";
+    pname = "<%= $distro->{distribution} %>";
+    version = "<%= $distro->{version} %>";
     src = fetchurl {
-      url = "<%= $m->{download_url} %>";
+      url = "<%= $distro->{download_url} %>";
       sha256 = "<%= $sha256 %>";
     };
-% if (my @b = @{$m->{build_inputs} || [] }) {
+% if (my @b = @{$distro->{build_inputs} || [] }) {
     buildInputs = [ <%= join ' ', @b %> ];
 % }
-% if (my @b = @{$m->{propagated_build_inputs} || [] }) {
+% if (my @b = @{$distro->{propagated_build_inputs} || [] }) {
     propagatedBuildInputs = [ <%= join ' ', @b %> ];
 % }
     meta = {
-% my $homepage = $m->{resources}->{repository} && $m->{resources}->{repository}->{url};
+% my $homepage = $distro->{resources}->{repository} && $distro->{resources}->{repository}->{url};
 % if ($homepage) {
       homepage = "<%= $homepage %>";
 % }
-% if ($m->{abstract} && $m->{abstract} ne "Unknown") {
-      description = "<%= $m->{abstract} %>";
+% if ($distro->{abstract} && $distro->{abstract} ne "Unknown") {
+      description = "<%= $distro->{abstract} %>";
 % }
+% if ($license) {
       license = <%= $license %>;
+% }
     };
   };
 EOF
@@ -328,9 +444,16 @@ EOF
 sub get_metacpan_api($path) {
     my $url = "https://fastapi.metacpan.org/$path";
     my $res = $ua->get($url);
-    croak "$res->{status} $res->{reason}: $url" unless $res->{success};
+    my $log = "GET $url ($res->{status} $res->{reason})";
+    DEBUG($log);
+    die $log unless $res->{success};
     my $ret = decode_json($res->{content});
     return $ret;
+}
+
+sub get_release_by_module_name($module_name) {
+    my $module = get_module($module_name);
+    return get_release($module->{distribution});
 }
 
 sub get_release ($release) { # MetaCPAN::Client doesn't want to return
@@ -348,6 +471,7 @@ sub get_module ($module) {
 sub get_attr ($text, $attr) {
     my $cnt = $text =~ m/$attr\s*=\s*$RE{quoted}{-keep};/;
     my $val = $1;
+    return unless defined $val;
     die "get_attr $attr found more than 1 in text: $text" if $cnt>1;
     $val =~ s/^(['"])(.*)\1/$2/;
     return $val;
@@ -358,7 +482,7 @@ sub get_attr_list ($text, $attr) {
     my ($val) = $text =~ m/ $attr\s*=\s*
                             $RE{balanced}{-parens=>'[]'}
                           /gx;
-    my @ret = grep { !/^[\[\]]$/ } split(/\s+/, $val);
+    my @ret = grep { !/^[\[\]]$/ } split(/\s+/, $val) if $val;
     ### get_attr_list: @ret
     return sort @ret;
 }
@@ -379,21 +503,47 @@ sub set_attr($text, $attr, $val) {
     return $text;
 }
 
-sub distr_name_to_attr ($distr) {
-    # Converts perl ditribution or module names to nix attribute
-    die "no \$distr" unless $distr;
-    $distr=~ s/[:-]//g;
-    return $distr;
+sub unique_distros (@distros) {
+    my $seen = { };
+    return grep { !$seen->{$_->{distribution}}++ } @distros;
 }
+
+sub distro_name_to_attr ($distro) {
+    # Converts perl ditribution or module names to nix attribute
+    die "no \$distro_name" unless $distro;
+    $distro=~ s/[:-]//g;
+    return $distro;
+}
+
+sub exists_in_nix_file ($app, $attr) {
+    my $found = grep { $_->[1] eq $attr } parse_nix_file($app->nix_file);
+    return $found;
+}
+
+sub exists_in_nixpkgs ($attr) {
+    chomp(my $ret = qx(nix-instantiate --eval -E '(import <nixpkgs> {}).perlPackages.$attr.pname'));
+    return $ret =~ m/\".+\"/; #XXX: This should be better...
+}
+
 sub sha256_hex_to_base32 ($hex) {
     die "not hex" unless $hex=~/^[a-f0-9]{64}$/;
     chomp(my $ret=qx(nix-hash --type sha256 --to-base32 $hex));
     return $ret;
 }
 
-sub exists_in_nixpkgs ($attr) {
-    chomp(my $ret = qx(nix-instantiate --eval -E '(import <nixpkgs> {}).perlPackages.$attr.pname'));
-    return $ret =~ m/\".+\"/; #XXX: This should be better...
+sub http_tiny_clear_cache($app) {
+    my $tempdir = File::Util::Tempdir::get_user_tempdir();
+    INFO("Clearing HTTP::Tiny::Cache cache ...");
+    my $cachedir = "$tempdir/http_tiny_cache";
+    opendir(my $dh, $cachedir) || die "Can't opendir $cachedir: $!";
+    my @cache_files = grep { /^[a-f0-9]{64}$/ } readdir($dh);
+    closedir($dh);
+    ### Deleting cache: @cache_files
+    foreach (@cache_files) {
+        unlink("$cachedir/$_") || die "$cachedir/$_: $!";
+    }
+    INFO("Deleted ".scalar(@cache_files)." cache files from $cachedir");
+    return @cache_files;
 }
 
 ##
@@ -595,13 +745,11 @@ sub render_license {
 
     my $nix_license = license_map($cpan_license);
     if ( !$nix_license ) {
-        ### aa
-        warn("Unknown license: $cpan_license");
+        WARN("Unknown license: $cpan_license");
         $licenses = [$cpan_license];
         $in_set   = 0;
     }
     else {
-        ### bb
         $licenses = $nix_license->{licenses};
         $amb      = $nix_license->{amb};
         $in_set   = !$nix_license->{in_set};
@@ -610,33 +758,27 @@ sub render_license {
     my $license_line;
 
     if ( @$licenses == 0 ) {
-
         # Avoid defining the license line.
     }
     elsif ($in_set) {
         my $lic = 'lib.licenses';
         if ( @$licenses == 1 ) {
-            ### a
             $license_line = "$lic.$licenses->[0]";
         }
         else {
-            ### b
             $license_line = "with $lic; [ " . join( ' ', @$licenses ) . " ]";
         }
     }
     else {
         if ( @$licenses == 1 ) {
-            ### c
             $license_line = $licenses->[0];
         }
         else {
-            ### d
             $license_line = '[ ' . join( ' ', @$licenses ) . ' ]';
         }
     }
 
-    #INFO("license: $cpan_license");
-    #WARN("License '$cpan_license' is ambiguous, please verify") if $amb;
-    ### license_line: $license_line
+    INFO("license: $cpan_license");
+    WARN("License '$cpan_license' is ambiguous, please verify") if $amb;
     return $license_line;
 }
