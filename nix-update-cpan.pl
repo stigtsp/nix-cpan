@@ -1,5 +1,5 @@
 #! /usr/bin/env nix-shell
-#! nix-shell -i perl -p "with perl.pkgs; [ perl Applify RegexpCommon Mojolicious SmartComments SortVersions HTTPTinyCache TextDiff Perl6Junction Log4Perl IOSocketSSL ]"
+#! nix-shell -i perl -p "with perl.pkgs; [ perl Applify RegexpCommon Mojolicious MathBigInt SmartComments SortVersions HTTPTinyCache TextDiff Perl6Junction Log4Perl IOSocketSSL ]"
 
 # Work in progress :-) Run this in the root of your nixpkgs checkout.
 #
@@ -35,7 +35,8 @@ use File::Util::Tempdir;
 use Regexp::Common;
 use Text::Diff;
 use Smart::Comments -ENV;
-
+use MIME::Base64;
+use Math::BigInt;
 use Sort::Versions;
 
 use Mojo::File 'path';
@@ -386,7 +387,7 @@ sub update_derivation ($app, $attrname, $build_fun, $part) {
         my $code = set_attrs($part,
                              version => $cpan->{version},
                              url     => $cpan->{download_url},
-                             sha256  => sha256_hex_to_base32($cpan->{checksum_sha256})
+                             sha256  => sha256_hex_to_sri($cpan->{checksum_sha256})
                          );
 
         $drv->{old_version} = $drv->{version};
@@ -408,7 +409,7 @@ sub update_derivation ($app, $attrname, $build_fun, $part) {
 sub generate_nix_derivation ($distro, $attr_name, $build_fun) {
     my $attr     = attr_is_reserved($attr_name) ? "\"$attr_name\"" : $attr_name;
     my $license  = render_license($distro->{license}->[0]);
-    my $sha256 = sha256_hex_to_base32($distro->{checksum_sha256});
+    my $sha256   = sha256_hex_to_sri($distro->{checksum_sha256});
 
     return Mojo::Template->new->render(<<'EOF', $build_fun, $attr, $distro, $license, $sha256);
 % my ($build_fun, $attr, $distro, $license, $sha256) = @_;
@@ -525,10 +526,9 @@ sub exists_in_nixpkgs ($attr) {
     return $ret =~ m/\".+\"/; #XXX: This should be better...
 }
 
-sub sha256_hex_to_base32 ($hex) {
-    die "not hex" unless $hex=~/^[a-f0-9]{64}$/;
-    chomp(my $ret=qx(nix-hash --type sha256 --to-base32 $hex));
-    return $ret;
+sub sha256_hex_to_sri ($hex) {
+    my $num = Math::BigInt->new("0x$hex")->to_bytes();
+    return "sha256-" . encode_base64( $num, "" );
 }
 
 sub http_tiny_clear_cache($app) {
