@@ -91,8 +91,9 @@ app {
     my $app = shift;
     Log::Log4perl->easy_init({
             level =>  ($app->debug ? $DEBUG : ($app->verbose ? $INFO : undef)),
-            layout => '%m%n'
+            layout => '%X{distro}%m%n'
         });
+    Log::Log4perl::MDC->put('distro', q{});
 
     $app->http_tiny_clear_cache() if $app->clear_cache;
 
@@ -211,10 +212,12 @@ sub run_update ($app) {
 sub run_generate ($app) {
     my $distro;
     if (my $dn = $app->distribution) {
-        INFO("Looking up distribution: $dn");
+        Log::Log4perl::MDC->put('distro', "[$dn] ");
+        INFO("Looking up distribution...");
         $distro = get_release($dn);
     } elsif (my $module = $app->module) {
-        INFO("Looking up distribution from module name: $module");
+        Log::Log4perl::MDC->put('distro', "[$module] ");
+        INFO("Looking up distribution from module name...");
         $distro = get_release_by_module_name($module);
     } else {
         die "generate: Missing either `--module=Foo::Bar` or `--distribution=Foo-Bar` option.";
@@ -253,7 +256,7 @@ EOT
 sub generate_distro ($app, $distro, $resolve_deps=0) {
 
     my $distro_name = $distro->{distribution};
-    INFO("### $distro_name ###");
+    INFO("Generating distro...");
     die "\resolve_deps level too high" if $resolve_deps > 5;
     DEBUG("Ended up with distribution: $distro->{distribution}");
 
@@ -362,7 +365,6 @@ sub update_derivation ($app, $attrname, $build_fun, $part) {
     $drv->{build_inputs} = [ get_attr_list($part, 'buildInputs') ];
     $drv->{propagated_build_inputs} = [ get_attr_list($part, 'propagatedBuildInputs') ];
 
-
     unless ($drv->{url} =~ m|^mirror://cpan/|) {
         warn "skipping: $attrname \$url is not mirror://cpan";
         return;
@@ -407,6 +409,8 @@ sub update_derivation ($app, $attrname, $build_fun, $part) {
 }
 
 sub generate_nix_derivation ($distro, $attr_name, $build_fun) {
+    Log::Log4perl::MDC->put('distro', "[$distro->{distribution}] ");
+
     my $attr     = attr_is_reserved($attr_name) ? "\"$attr_name\"" : $attr_name;
     my $license  = render_license($distro->{license}->[0]);
     my $sha256   = sha256_hex_to_sri($distro->{checksum_sha256});
