@@ -378,7 +378,7 @@ sub update_derivation ($app, $attrname, $build_fun, $part) {
     $drv->{url}     = get_attr($part, 'url');
     $drv->{pname}   = get_attr($part, 'pname');
     $drv->{version} = get_attr($part, 'version');
-    $drv->{sha256}  = get_attr($part, 'sha256');
+    $drv->{hash}    = get_attr($part, 'hash');
 
     $drv->{build_fun} = $build_fun;
 
@@ -389,8 +389,8 @@ sub update_derivation ($app, $attrname, $build_fun, $part) {
         warn "skipping: $attrname \$url is not mirror://cpan";
         return;
     }
-    unless ($drv->{pname} && $drv->{url} && $drv->{version} && $drv->{sha256}) {
-        warn "skipping: $attrname missing \$version, \$pname, \$url, or \$sha256";
+    unless ($drv->{pname} && $drv->{url} && $drv->{version} && $drv->{hash}) {
+        warn "skipping: $attrname missing \$version, \$pname, \$url, or \$hash";
         return;
     }
 
@@ -409,7 +409,7 @@ sub update_derivation ($app, $attrname, $build_fun, $part) {
         my $code = set_attrs($part,
                              version => $cpan->{version},
                              url     => $cpan->{download_url},
-                             sha256  => sha256_hex_to_sri($cpan->{checksum_sha256})
+                             hash    => sha256_hex_to_sri($cpan->{checksum_sha256})
                          );
 
         $drv->{old_version} = $drv->{version};
@@ -433,16 +433,16 @@ sub generate_nix_derivation ($distro, $attr_name, $build_fun) {
 
     my $attr     = attr_is_reserved($attr_name) ? "\"$attr_name\"" : $attr_name;
     my $license  = render_license($distro->{license}->[0]);
-    my $sha256   = sha256_hex_to_sri($distro->{checksum_sha256});
+    my $hash     = sha256_hex_to_sri($distro->{checksum_sha256});
 
-    return Mojo::Template->new->render(<<'EOF', $build_fun, $attr, $distro, $license, $sha256);
-% my ($build_fun, $attr, $distro, $license, $sha256) = @_;
+    return Mojo::Template->new->render(<<'EOF', $build_fun, $attr, $distro, $license, $hash);
+% my ($build_fun, $attr, $distro, $license, $hash) = @_;
   <%= $attr %> = <%= $build_fun %> {
     pname = "<%= $distro->{distribution} %>";
     version = "<%= $distro->{version} %>";
     src = fetchurl {
       url = "<%= $distro->{download_url} %>";
-      sha256 = "<%= $sha256 %>";
+      hash = "<%= $hash %>";
     };
 % if (my @b = @{$distro->{build_inputs} || [] }) {
     buildInputs = [ <%= join ' ', @b %> ];
