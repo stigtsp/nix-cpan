@@ -10,6 +10,7 @@
   - [X] ~option to~ don't sign commits
   - [X] ~--dry-run~ omit --commit for testing
   - [X] check that branch is not master
+- [ ] add `verify_SSL => 1` to HTTP::Tiny usage
 - corner cases
   - [ ] try to work out errata
   - [X] some cases have distribution as pname, not module
