@@ -431,7 +431,7 @@ sub generate_nix_derivation ($distro, $attr_name, $build_fun) {
     propagatedBuildInputs = [ <%= join ' ', @b %> ];
 % }
     meta = {
-% my $homepage = $distro->{resources}->{repository} && $distro->{resources}->{repository}->{url};
+% my $homepage = $distro->{resources}->{homepage} // ($distro->{resources}->{repository} && $distro->{resources}->{repository}->{url});
 % if ($homepage) {
       homepage = "<%= $homepage %>";
 % }
