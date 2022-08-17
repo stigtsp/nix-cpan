@@ -178,7 +178,7 @@ sub run_update ($app) {
             Mojo::File->new($nix_file)->spurt($newnix);
             if ($app->commit) {
                 git_commit($nix_file,
-                           "[nix-cpan] perlPackages.$drv->{attrname}: "
+                           "perlPackages.$drv->{attrname}: "
                              . "$drv->{old_version} -> $drv->{new_version}");
             }
         }
