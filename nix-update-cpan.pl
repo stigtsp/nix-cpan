@@ -74,6 +74,7 @@ option bool    => "update"       => "Update perlPackages in nix-file";
 
 option string  => "attr"         => "update: Name of single attr to update";
 option bool    => "commit"       => "update: Create one commit per update (implies --inplace)" => 0;
+option bool    => "force"        => "update: Ignores git repo sanity checks" => 0;
 option bool    => "inplace"      => "update: Modify nix-file inplace" => 0;
 
 option bool    => "deps"         => "Also add new dependencies if they don't already exist in nixpkgs";
@@ -160,7 +161,18 @@ sub run_update ($app) {
 
     if ($app->commit) {
         ### Checking git_sanity
-        git_sanity($nix_file);
+        if ($app->force) {
+            try {
+                git_sanity($nix_file);
+            } catch ($e) {
+                warn "Git sanity check failed, but --force is enabled so proceeding anyway\n";
+                warn "$e\n";
+            }
+        } else {
+            git_sanity($nix_file);
+        }
+
+
     }
 
 
