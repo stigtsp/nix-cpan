@@ -282,8 +282,16 @@ sub generate_distro ($app, $distro, $resolve_deps=0) {
     my @build_deps = $get_deps->( [qw(requires)], [qw(configure build test)] );
     my @runtime_deps = $get_deps->( [qw(requires)], [qw(runtime)] );
 
-    # TODO: check that the distro has a Build.PL in project root
-    my $build_fun = ( grep { $_->{main_module} eq 'Module::Build' } @build_deps )
+    my $have_build_pl = eval {
+        my $url = "https://fastapi.metacpan.org/source/$distro->{author}/$distro->{release}/Build.PL";
+
+        my $res = $ua->get($url);
+        my $log = "GET $url ($res->{status} $res->{reason})";
+        DEBUG($log);
+        return $res->{success};
+    };
+
+    my $build_fun = ( $have_build_pl || grep { $_->{main_module} eq 'Module::Build' } @build_deps )
       ? "buildPerlModule" : "buildPerlPackage";
 
     $distro->{build_inputs} = [
@@ -464,6 +472,7 @@ sub get_release_by_module_name($module_name) {
 sub get_release ($release) { # MetaCPAN::Client doesn't want to return
                              # checksum_sha256, so we fetch the JSON manually
     my $ret = get_metacpan_api("v1/release/$release");
+    $ret->{release} = "$release-" . $ret->{version};
     $ret->{version} =~ s/^v//; # XXX: This should maybe not be here?
     $ret->{download_url} =~ s|^https://cpan.metacpan.org/|mirror://cpan/|;
     return $ret;
