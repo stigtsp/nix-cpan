@@ -86,7 +86,7 @@ option file    => "nix_file"       => "(optional) Path to perl-packages.nix" => 
 option bool  => "verbose"    => "Show changes and determinations being made" => 0;
 
 
-our $ua = new HTTP::Tiny::Cache ( agent => "nix-update-perl-packages/$VERSION" );
+our $ua = new HTTP::Tiny::Cache ( agent => "nix-update-perl-packages/$VERSION", verify_SSL => 1 );
 
 app {
     my $app = shift;
