@@ -1,4 +1,4 @@
-# nix-update-cpan
+# nix-cpan
 
 ## TODO
 - [X] versions (use Sort::Versions)

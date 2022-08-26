@@ -4,17 +4,17 @@
 # Work in progress :-) Run this in the root of your nixpkgs checkout.
 #
 # Generate derivation snippet:
-#   nix-update-cpan.pl --generate --distribution=HTML-FormHandler
+#   nix-cpan.pl --generate --distribution=HTML-FormHandler
 #
 # Generate shell.nix file with dependencies:
-#   nix-update-cpan.pl --generate --shell --distribution=App-Presto --deps > shell.nix
+#   nix-cpan.pl --generate --shell --distribution=App-Presto --deps > shell.nix
 #
 # Update perl-packages.nix in place:
-#   nix-update-cpan.pl --update --inplace
+#   nix-cpan.pl --update --inplace
 #
 # Update perl-packages.nix with nix-cpan commits:
 #   git checkout -b nix-update-perl/$(date +%s)
-#   nix-update-cpan.pl --update --commit
+#   nix-cpan.pl --update --commit
 #
 #
 # --verbose and --debug can be useful options
