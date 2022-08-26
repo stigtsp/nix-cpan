@@ -19,7 +19,7 @@
   - [ ] figure out and update `propagatedBuildInputs`, `buildInputs`, etc
 - end report (upgraded, skipped, etc) for pasting into PR
 - tests
-  - [ ] perlcritic
+  - [x] perlcritic
   - [ ] unit tests for some pure functions
   - [ ] mocked metacpan_api tests with `Test::Mock::HTTP::Tiny`
   - ...
