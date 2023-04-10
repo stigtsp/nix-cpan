@@ -20,14 +20,17 @@
 # --verbose and --debug can be useful options
 
 
-use v5.34;
+
+
+use v5.36;
 use Applify;
 
 use strict;
 use warnings;
 
 use feature qw(signatures try);
-no warnings qw(experimental::signatures experimental::try);
+use experimental qw(try multidimensional);
+## no critic (Subroutines::ProhibitSubroutinePrototypes)
 
 use Data::Dumper;
 use HTTP::Tiny::Cache;
@@ -86,7 +89,8 @@ option file    => "nix_file"       => "(optional) Path to perl-packages.nix" => 
 option bool  => "verbose"    => "Show changes and determinations being made" => 0;
 
 
-our $ua = new HTTP::Tiny::Cache ( agent => "nix-update-perl-packages/$VERSION", verify_SSL => 1 );
+our $ua = HTTP::Tiny::Cache->new( agent => "nix-update-perl-packages/$VERSION",
+                                  verify_SSL => 1 );
 
 app {
     my $app = shift;
