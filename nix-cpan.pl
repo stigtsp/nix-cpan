@@ -123,9 +123,11 @@ sub parse_nix_file($nix_file, $cb=undef) { # Parses a perl-packages.nix file
     my $nix = Mojo::File->new($nix_file)->slurp;
 
     my (@ret);
-    while ($nix =~ m/(([\w-]+)\s+=\s+buildPerl(Package|Module)\s+(?:rec)?\s*)
-                     ($RE{balanced}{-parens=>'{}'})/gx) {
-        my ($prepart, $attrname, $build_fun, $part) = ($1, $2, $3, $4);
+    while ($nix =~ m/(\s+)
+                     (([\w-]+)\s+=\s+buildPerl(Package|Module)\s+(?:rec)?\s*)
+                     (\{[\s\S]+?(?m:^)\1\};)
+                    /mgx) {
+        my (undef, $prepart, $attrname, $build_fun, $part) = ($1, $2, $3, $4, $5);
         if ($cb) {
             push @ret, $cb->($prepart, $attrname, $build_fun, $part);
         } else {
