@@ -53,6 +53,8 @@ use Module::CoreList;
 use Carp qw(croak);
 use Log::Log4perl qw(:easy);
 
+use Time::HiRes qw(time);
+
 our $VERSION = 0.01;
 
 our $ERRATA = require(path(path(__FILE__)->dirname, "errata.conf"));
@@ -120,21 +122,46 @@ sub run_list_nix_file ($app) {
 sub parse_nix_file($nix_file, $cb=undef) { # Parses a perl-packages.nix file
 
     die "no .nix file provided" unless -f $nix_file;
-    my $nix = Mojo::File->new($nix_file)->slurp;
 
-    my (@ret);
-    while ($nix =~ m/(\s+)
-                     (([\w-]+)\s+=\s+buildPerl(Package|Module)\s+(?:rec)?\s*)
-                     (\{[\s\S]+?(?m:^)\1\};)
-                    /mgx) {
-        my (undef, $prepart, $attrname, $build_fun, $part) = ($1, $2, $3, $4, $5);
-        if ($cb) {
-            push @ret, $cb->($prepart, $attrname, $build_fun, $part);
-        } else {
-            push @ret, [$prepart, $attrname, $build_fun, $part];
+    open(my $fh, "<", $nix_file) || die $!;
+
+    my $attr = {};
+    my %in;
+    my $i = 0;
+
+    my $start = time();
+
+    while (my $l = <$fh>) {
+        if ($l=~m/(\s+)(([\w-]+)\s+=\s+buildPerl(Package|Module)\s+(?:rec)?\s*)\{/) {
+            %in = (
+                ws          => $1,
+                prepart     => $2,
+                attrname    => $3,
+                build_fun   => $4,
+            );
+            DEBUG("parse_nix_file: Found $in{attrname}");
+        } elsif ( %in && $l =~ m/^$in{ws}\};/ ) {
+            DEBUG("parse_nix_file: Found end of $in{attrname}");
+            %in = ();
+        } elsif ( %in ) {
+            DEBUG("parse_nix_file: Line $i to $in{attrname} ## $l");
+            my $h = $attr->{ $in{attrname} } //= { %in };
+            push @{$h->{lines}}, [$i, $l];
+            $h->{part} .= $l;
         }
+        $i++;
     }
-    return grep { $_ } @ret;
+    close $fh;
+
+    my @ret;
+    foreach my $k (sort keys %$attr) {
+        my $h = $attr->{$k};
+        push @ret, [ $h->{prepart},
+                     $h->{attrname},
+                     $h->{build_fun},
+                     $h->{part} ];
+    }
+    return @ret;
 }
 
 sub run_update ($app) {
