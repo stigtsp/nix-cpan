@@ -20,14 +20,17 @@
 # --verbose and --debug can be useful options
 
 
-use v5.34;
+
+
+use v5.36;
 use Applify;
 
 use strict;
 use warnings;
 
 use feature qw(signatures try);
-no warnings qw(experimental::signatures experimental::try);
+use experimental qw(try multidimensional);
+## no critic (Subroutines::ProhibitSubroutinePrototypes)
 
 use Data::Dumper;
 use HTTP::Tiny::Cache;
@@ -49,6 +52,8 @@ use Perl6::Junction qw(one none);
 use Module::CoreList;
 use Carp qw(croak);
 use Log::Log4perl qw(:easy);
+
+use Time::HiRes qw(time);
 
 our $VERSION = 0.01;
 
@@ -86,7 +91,8 @@ option file    => "nix_file"       => "(optional) Path to perl-packages.nix" => 
 option bool  => "verbose"    => "Show changes and determinations being made" => 0;
 
 
-our $ua = new HTTP::Tiny::Cache ( agent => "nix-update-perl-packages/$VERSION", verify_SSL => 1 );
+our $ua = HTTP::Tiny::Cache->new( agent => "nix-update-perl-packages/$VERSION",
+                                  verify_SSL => 1 );
 
 app {
     my $app = shift;
@@ -116,19 +122,46 @@ sub run_list_nix_file ($app) {
 sub parse_nix_file($nix_file, $cb=undef) { # Parses a perl-packages.nix file
 
     die "no .nix file provided" unless -f $nix_file;
-    my $nix = Mojo::File->new($nix_file)->slurp;
 
-    my (@ret);
-    while ($nix =~ m/(([\w-]+)\s+=\s+buildPerl(Package|Module)\s+(?:rec)?\s*)
-                     ($RE{balanced}{-parens=>'{}'})/gx) {
-        my ($prepart, $attrname, $build_fun, $part) = ($1, $2, $3, $4);
-        if ($cb) {
-            push @ret, $cb->($prepart, $attrname, $build_fun, $part);
-        } else {
-            push @ret, [$prepart, $attrname, $build_fun, $part];
+    open(my $fh, "<", $nix_file) || die $!;
+
+    my $attr = {};
+    my %in;
+    my $i = 0;
+
+    my $start = time();
+
+    while (my $l = <$fh>) {
+        if ($l=~m/(\s+)(([\w-]+)\s+=\s+buildPerl(Package|Module)\s+(?:rec)?\s*)\{/) {
+            %in = (
+                ws          => $1,
+                prepart     => $2,
+                attrname    => $3,
+                build_fun   => $4,
+            );
+            DEBUG("parse_nix_file: Found $in{attrname}");
+        } elsif ( %in && $l =~ m/^$in{ws}\};/ ) {
+            DEBUG("parse_nix_file: Found end of $in{attrname}");
+            %in = ();
+        } elsif ( %in ) {
+            DEBUG("parse_nix_file: Line $i to $in{attrname} ## $l");
+            my $h = $attr->{ $in{attrname} } //= { %in };
+            push @{$h->{lines}}, [$i, $l];
+            $h->{part} .= $l;
         }
+        $i++;
     }
-    return grep { $_ } @ret;
+    close $fh;
+
+    my @ret;
+    foreach my $k (sort keys %$attr) {
+        my $h = $attr->{$k};
+        push @ret, [ $h->{prepart},
+                     $h->{attrname},
+                     $h->{build_fun},
+                     $h->{part} ];
+    }
+    return @ret;
 }
 
 sub run_update ($app) {
