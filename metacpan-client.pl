@@ -1,5 +1,5 @@
 #! /usr/bin/env nix-shell
-#! nix-shell -i perl -p "with perl.pkgs; [ perl MetaCPANClient Mojolicious CpanelJSONXS SmartComments ]"
+#! nix-shell -i perl -p "with perl.pkgs; [ perl MetaCPANClient DataMessagePack SmartComments ]"
 
 # TODO
 # - Better cache handling, add --clear-cache
@@ -7,42 +7,55 @@
 # - Check for Build.PL trough MetaCPAN API
 
 use v5.38;
-use strict;
-use MetaCPAN::Client;
+use File::Spec::Functions;
+use File::stat;
+use IO::Zlib;
 use Data::Dumper;
-use Smart::Comments;
-use Mojo::File qw(path);
-use Mojo::JSON qw(decode_json encode_json);
 
-my $cache_file = path($ENV{XDG_RUNTIME_DIR}, "metacpan-cache.json");
+use MetaCPAN::Client;
+use Smart::Comments;
+use Data::MessagePack;
+
+my $cache_file = catfile( $ENV{XDG_RUNTIME_DIR} || "/var/tmp/" ,
+                          "metacpan-cache.messagepack.gz");
+
+my $cache_ttl = 86400 * 3;
 
 sub get_releases_cached ($cache_file) {
+  my $mp = Data::MessagePack->new();
+
   if (-f $cache_file) {
-    ### Parsing cache of all latest releases
-    return decode_json($cache_file->slurp);
+    my $ago = time() - stat($cache_file)->mtime;
+    if (1) { #}$ago > $cache_ttl) {
+      warn sprintf("Warning: $cache_file is %d days old, consider refreshing it\n",
+                   ($ago / 86400));
+    }
+    ### Loading cache from: $cache_file
+    my $fh = IO::Zlib->new($cache_file, "rb") || die $!;
+    my $unpacked = $mp->unpack(join "", <$fh>);
+    $fh->close;
+    return $unpacked;
   }
   my $releases = get_releases();
-  $cache_file->spurt(encode_json($releases));
+
+  ### Packing cache
+  my $packed = $mp->pack($releases);
+
+  ### Writing cache to: $cache_file
+  my $wh = IO::Zlib->new($cache_file, "wb3") || die $!;
+  print $wh $packed;
+  $wh->close;
   return $releases;
 }
 
 sub get_releases  {
   my $mc = MetaCPAN::Client->new();
 
-  my @spec =
-    (
-      {
-        all => [ { status => 'latest' }, { authorized=>!!1 } ]
-      },
-      # {
-      #   #fields => [qw/release/],
-      #   fields => [qw/ distribution version version_numified checksum_sha256 download_url
-      #                  license name abstract author authorized provides main_module /],
-      #   #'_source' => [qw/ distribution dependency version release provides /]
-      # }
-  );
+  my $release_results = $mc->release({
+    all => [ { status     => 'latest' },
+             { authorized => !!1      } ]
+  });
 
-  my $release_results = $mc->release(@spec);
   my @releases;
 
   my $total = $release_results->total;
@@ -54,7 +67,12 @@ sub get_releases  {
 }
 
 
+
+
 my $releases = get_releases_cached($cache_file);
+my $total = @$releases;
+
+### Got releases: $total
 
 my %distros;
 foreach my $release (@$releases) {
