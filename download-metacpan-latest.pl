@@ -1,5 +1,5 @@
 #! /usr/bin/env nix-shell
-#! nix-shell -i perl -p "with perl.pkgs; [ perl Applify Log4Perl MetaCPANClient SmartComments MojoSQLite DBDSQLite ]"
+#! nix-shell -i perl -p "with perl.pkgs; [ perl Applify Log4Perl MetaCPANClient SmartComments MojoSQLite DBDSQLite CpanelJSONXS ]"
 
 # TODO
 # - Better cache handling, add --clear-cache
