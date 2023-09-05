@@ -1,5 +1,4 @@
-#! /usr/bin/env nix-shell
-#! nix-shell -i perl -p "with perl.pkgs; [ perl Applify RegexpCommon Mojolicious MathBigInt SmartComments SortVersions HTTPTinyCache TextDiff Perl6Junction Log4Perl IOSocketSSL ]"
+#!/usr/bin/env perl
 
 # Work in progress :-) Run this in the root of your nixpkgs checkout.
 #

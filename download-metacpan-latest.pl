@@ -1,6 +1,5 @@
-#! /usr/bin/env nix-shell
-#! nix-shell -i perl -p "with perl.pkgs; [ perl Applify Log4Perl MetaCPANClient SmartComments MojoSQLite DBDSQLite CpanelJSONXS ]"
-
+#!/usr/bin/env perl
+#
 # TODO
 # - Better cache handling, add --clear-cache
 # - Get dependencies from the bulk MetaCPAN API queries
@@ -21,11 +20,11 @@ use Log::Log4perl qw(:easy);
 my $db_file_default = catfile( $ENV{XDG_RUNTIME_DIR} || "/var/tmp/",
                                "metacpan-cache.db" );
 
-option file => "db_file" => "SQLite file to store metacpan data in" => $db_file_default;
-option string => "distro" => "Get distro info" => undef;
-option bool => "download" => "Download latest distributions from MetaCPAN API" => 0;
-option bool => "update_dependencies" => "Update dependencies" => 0;
-option bool => "debug" => "Enable debug messages" => 0;
+option file    => "db_file"   => "SQLite file to store metacpan data in" => $db_file_default;
+option string  => "distro"    => "Get distro info" => undef;
+option bool    => "download"  => "Download latest distributions from MetaCPAN API" => 0;
+option bool    => "update_dependencies" => "Update dependencies" => 0;
+option bool    => "debug"     => "Enable debug messages" => 0;
 
 app {
   my $app = shift;
