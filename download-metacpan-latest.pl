@@ -21,7 +21,8 @@ my $db_file_default = catfile( $ENV{XDG_RUNTIME_DIR} || "/var/tmp/",
                                "metacpan-cache.db" );
 
 option file    => "db_file"   => "SQLite file to store metacpan data in" => $db_file_default;
-option string  => "distro"    => "Get distro info" => undef;
+option string  => "distribution"    => "Get distribution" => undef;
+option string  => "main_module"     => "Get by main module" => undef;
 option bool    => "download"  => "Download latest distributions from MetaCPAN API" => 0;
 option bool    => "update_dependencies" => "Update dependencies" => 0;
 option bool    => "debug"     => "Enable debug messages" => 0;
@@ -31,17 +32,30 @@ app {
   Log::Log4perl->easy_init({
     level =>  ($app->debug ? $DEBUG : $INFO),
   });
-  return $app->run_distro if $app->distro;
+  return $app->run_distribution if $app->distribution;
+  return $app->run_main_module if $app->main_module;
+
   return $app->run_download if $app->download;
   return $app->run_update_dependencies if $app->update_dependencies;
   $app->_script->print_help;
   return 1;
 };
 
-sub run_distro ($app) {
-  say $app->sql->db->query("SELECT data FROM releases WHERE distribution=?", $app->distro)->hash->{data};
+sub run_distribution ($app) {
+  say $app->sql->db->query("SELECT data FROM releases WHERE distribution=?",
+                           $app->distribution)->hash->{data};
   return 0;
 }
+
+sub run_main_module ($app) {
+  say $app->sql->db->query("SELECT data FROM releases WHERE main_module=?",
+                           $app->main_module)->hash->{data};
+  return 0;
+}
+
+
+
+
 
 sub run_download ($app) {
   INFO("Getting releases");
@@ -54,7 +68,6 @@ sub run_download ($app) {
   }
   INFO("Writing releases to: ".$app->db_file);
   $app->write_releases($releases);
-
   $app->run_update_dependencies();
   return 0;
 }
@@ -65,9 +78,7 @@ sub run_update_dependencies ($app) {
     WARN("Can't find DB file");
     return 1;
   }
-  INFO("Writing dependencies to: ".$app->db_file);
   $app->write_dependencies();
-  INFO("Done");
   return 0;
 }
 
@@ -79,11 +90,17 @@ sub sql ($app) {
 sub write_releases($app, $releases) {
   my $db = $app->sql->db;
   $db->query("DROP TABLE IF EXISTS releases");
-  $db->query("CREATE TABLE releases (name varchar(255) primary key, distribution varchar(255), data blob)");
+  $db->query(
+    "CREATE TABLE releases (
+              name varchar(255) primary key,
+              distribution varchar(255),
+              main_module varchar(255),
+              data blob)");
   foreach my $r (@$releases) {
     $db->insert('releases', {
       name => $r->{name},
       distribution => $r->{distribution},
+      main_module => $r->{main_module},
       data => encode_json($r)
     });
   }
@@ -103,7 +120,7 @@ sub write_dependencies ($app) {
   my $db = $app->sql->db;
 
   my @ins;
-  ### Iterating over releases
+  INFO("Loading dependencies");
   $app->each_release(
     sub ($r) {
       return unless $r->{dependency};
@@ -114,7 +131,7 @@ sub write_dependencies ($app) {
       }
     });
 
-  ### Writing dependencies
+  INFO("Writing dependencies");
 
   $db->query("DROP TABLE IF EXISTS dependency");
   $db->query("CREATE TABLE dependency (
@@ -144,7 +161,7 @@ sub get_releases ($app) {
   my @releases;
 
   my $total = $release_results->total;
-  foreach ( 1..$total ) { ### Downloading metadata on $total releases |===[%]    |
+  foreach ( 1..$total ) { ### Downloading $total releases |===[%]    |
     my $release = $release_results->next;
     push @releases, $release->{data};
   }
@@ -158,7 +175,7 @@ sub filter_releases ($releases) {
     if ($distros{$d} && $release->{version_numified} < $distros{$d}->{version_numified}) {
       my $cur_v  = $release->{version_numified};
       my $prev_c = $distros{$d}->{version_numified};
-      warn "Skipping ".$release->{name}." ($cur_v) since ".$distros{$d}->{name}." ($prev_c) is newer\n";
+      WARN("Skipping ".$release->{name}." ($cur_v) since ".$distros{$d}->{name}." ($prev_c) is newer");
       next;
     }
     $distros{$d} = $release;
@@ -171,12 +188,4 @@ sub filter_releases ($releases) {
 
   return \@releases;
 }
-
-# sub get_distro($distro) {
-#   my $data = sql()->db->query("SELECT * FROM releases WHERE distribution=?", $distro)->hash->{data};
-#   return decode_json($data);
-# }
-
-
-exit(0);
 
