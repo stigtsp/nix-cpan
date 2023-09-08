@@ -17,6 +17,7 @@ use Smart::Comments;
 use Cpanel::JSON::XS qw(encode_json decode_json);
 use Log::Log4perl qw(:easy);
 
+my $transaction_size = 2000;
 my $db_file_default = "/var/tmp/metacpan-cache.db";
 
 option file    => "db_file"   => "SQLite file to store metacpan data in" => $db_file_default;
@@ -25,8 +26,7 @@ option string  => "get_distribution"    => "Get distribution" => undef;
 option string  => "get_main_module"     => "Get by main module" => undef;
 option string  => "get_dependency"      => "Get by dependency" => undef;
 
-option bool    => "download"            => "Download latest distributions from MetaCPAN API" => 0;
-option bool    => "update_dependencies" => "Update dependencies" => 0;
+option bool    => "download"            => "Download latest distributions from MetaCPAN API, and write dependencies" => 0;
 option bool    => "debug"               => "Enable debug messages" => 0;
 
 app {
@@ -38,9 +38,8 @@ app {
   return $app->run_get_main_module  if $app->get_main_module;
   return $app->run_get_dependency   if $app->get_dependency;
 
-
   return $app->run_download if $app->download;
-  return $app->run_update_dependencies if $app->update_dependencies;
+
   $app->_script->print_help;
   return 1;
 };
@@ -73,24 +72,13 @@ sub run_download ($app) {
   }
 
   $app->write_releases($releases);
-  $app->run_update_dependencies();
-  return 0;
-}
-
-
-sub run_update_dependencies ($app) {
-  unless (-f $app->db_file) {
-    WARN("Can't find DB file");
-    return 1;
-  }
   $app->write_dependencies();
   return 0;
 }
 
-
 sub dbh ($app) {
   state $dbh =DBI->connect("dbi:SQLite:dbname=".$app->db_file,
-                      { RaiseError => 1, AutoCommit => 1});
+                      { RaiseError => 1, AutoCommit => 0});
   return $dbh;
 }
 
@@ -110,13 +98,24 @@ sub write_releases($app, $releases) {
     "CREATE INDEX r_main_module ON releases(main_module)";
 
   INFO("Writing releases");
-  my $sth = $dbh->prepare("INSERT INTO releases (name, distribution, main_module, data) VALUES (?,?,?,?)");
+
+  $dbh->begin_work;
+
+  my $sth = $dbh->prepare(
+    "INSERT INTO releases (name, distribution, main_module, data) VALUES (?,?,?,?)");
+  my $i=0;
   foreach my $r (@$releases) {
     $sth->execute( $r->{name},
                    $r->{distribution},
                    $r->{main_module},
                    encode_json($r) );
+    if (++$i % $transaction_size == 0) {
+      DEBUG("Committing $i");
+      $dbh->commit;
+      $dbh->begin_work;
+    }
   }
+  $dbh->commit;
 }
 
 sub each_release($app, $cb) {
@@ -148,10 +147,13 @@ sub write_dependencies ($app) {
 
   INFO("Writing dependency table");
 
+  $dbh->begin_work;
+
   my $ins_sth = $dbh->prepare(
     "INSERT INTO dependency (distribution, relationship, module, version, phase)
      VALUES (?,?,?,?,?)" );
 
+  my $i = 0;
   $app->each_release(
     sub ($r) {
       return unless $r->{dependency};
@@ -163,8 +165,14 @@ sub write_dependencies ($app) {
                       $d->{phase}];
 
         $ins_sth->execute(@$values);
+        if (++$i % $transaction_size == 0) {
+          DEBUG("Committing $i");
+          $dbh->commit;
+          $dbh->begin_work;
+        }
       }
     });
+  $dbh->commit;
 }
 
 
@@ -189,18 +197,32 @@ sub get_releases ($app) {
 
 sub filter_releases ($releases) {
   INFO("Filtering release data from MetaCPAN");
+
   my %distros;
   foreach my $release (@$releases) {
     my $d = $release->{distribution};
-    if ($distros{$d} && $release->{version_numified} < $distros{$d}->{version_numified}) {
+
+    # Handle duplicate distributions returned by the MetaCPAN API
+    if ($distros{$d}) {
+
       my $cur_v  = $release->{version_numified};
-      my $prev_c = $distros{$d}->{version_numified};
-      WARN("Skipping ".$release->{name}." ($cur_v) since ".$distros{$d}->{name}." ($prev_c) is newer");
-      next;
+      my $prev_v = $distros{$d}->{version_numified};
+
+      if ( $release->{version_numified} < $distros{$d}->{version_numified} ) {
+        WARN("Skipping ".$release->{name}." ($cur_v) since ".$distros{$d}->{name}." ($prev_v) is newer");
+        next;
+      }
+
+      if ( $release->{version_numified} > $distros{$d}->{version_numified} ) {
+        WARN("Using ".$release->{name}." ($cur_v) since ".$distros{$d}->{name}." ($prev_v) is older");
+      }
+
     }
+
     $distros{$d} = $release;
   }
 
+  # Sort by distribution name
   my @releases =
     map { $distros{$_} }
     sort { $distros{$a}->{distribution} cmp $distros{$b}->{distribution} }
