@@ -11,29 +11,33 @@ use Applify;
 use File::Spec::Functions;
 use File::stat;
 use Data::Dumper;
-use Mojo::SQLite;
+use DBI;
 use MetaCPAN::Client;
 use Smart::Comments;
 use Cpanel::JSON::XS qw(encode_json decode_json);
 use Log::Log4perl qw(:easy);
 
-my $db_file_default = catfile( $ENV{XDG_RUNTIME_DIR} || "/var/tmp/",
-                               "metacpan-cache.db" );
+my $db_file_default = "/var/tmp/metacpan-cache.db";
 
 option file    => "db_file"   => "SQLite file to store metacpan data in" => $db_file_default;
-option string  => "distribution"    => "Get distribution" => undef;
-option string  => "main_module"     => "Get by main module" => undef;
-option bool    => "download"  => "Download latest distributions from MetaCPAN API" => 0;
+
+option string  => "get_distribution"    => "Get distribution" => undef;
+option string  => "get_main_module"     => "Get by main module" => undef;
+option string  => "get_dependency"      => "Get by dependency" => undef;
+
+option bool    => "download"            => "Download latest distributions from MetaCPAN API" => 0;
 option bool    => "update_dependencies" => "Update dependencies" => 0;
-option bool    => "debug"     => "Enable debug messages" => 0;
+option bool    => "debug"               => "Enable debug messages" => 0;
 
 app {
   my $app = shift;
   Log::Log4perl->easy_init({
     level =>  ($app->debug ? $DEBUG : $INFO),
   });
-  return $app->run_distribution if $app->distribution;
-  return $app->run_main_module if $app->main_module;
+  return $app->run_get_distribution if $app->get_distribution;
+  return $app->run_get_main_module  if $app->get_main_module;
+  return $app->run_get_dependency   if $app->get_dependency;
+
 
   return $app->run_download if $app->download;
   return $app->run_update_dependencies if $app->update_dependencies;
@@ -41,15 +45,16 @@ app {
   return 1;
 };
 
-sub run_distribution ($app) {
-  say $app->sql->db->query("SELECT data FROM releases WHERE distribution=?",
-                           $app->distribution)->hash->{data};
+sub run_get_distribution ($app) {
+  say $app->dbh->selectrow_array("SELECT data FROM releases WHERE distribution=?", undef,
+                                 $app->get_distribution);
   return 0;
 }
 
-sub run_main_module ($app) {
-  say $app->sql->db->query("SELECT data FROM releases WHERE main_module=?",
-                           $app->main_module)->hash->{data};
+sub run_get_main_module ($app) {
+  say $app->dbh->selectrow_array("SELECT data FROM releases WHERE main_module=?", undef,
+                                 $app->get_main_module);
+
   return 0;
 }
 
@@ -66,7 +71,7 @@ sub run_download ($app) {
     INFO("Removing ".$app->db_file);
     unlink($app->db_file);
   }
-  INFO("Writing releases to: ".$app->db_file);
+
   $app->write_releases($releases);
   $app->run_update_dependencies();
   return 0;
@@ -83,70 +88,83 @@ sub run_update_dependencies ($app) {
 }
 
 
-sub sql ($app) {
-  return Mojo::SQLite->new("sqlite:".$app->db_file);
+sub dbh ($app) {
+  state $dbh =DBI->connect("dbi:SQLite:dbname=".$app->db_file,
+                      { RaiseError => 1, AutoCommit => 1});
+  return $dbh;
 }
 
 sub write_releases($app, $releases) {
-  my $db = $app->sql->db;
-  $db->query("DROP TABLE IF EXISTS releases");
-  $db->query(
+  my $dbh = $app->dbh;
+
+  INFO("Setting up releases table");
+
+  map { $dbh->do($_) }
+    "DROP TABLE IF EXISTS releases",
     "CREATE TABLE releases (
               name varchar(255) primary key,
               distribution varchar(255),
               main_module varchar(255),
-              data blob)");
+              data JSON)",
+    "CREATE INDEX r_distribution ON releases(distribution)",
+    "CREATE INDEX r_main_module ON releases(main_module)";
+
+  INFO("Writing releases");
+  my $sth = $dbh->prepare("INSERT INTO releases (name, distribution, main_module, data) VALUES (?,?,?,?)");
   foreach my $r (@$releases) {
-    $db->insert('releases', {
-      name => $r->{name},
-      distribution => $r->{distribution},
-      main_module => $r->{main_module},
-      data => encode_json($r)
-    });
+    $sth->execute( $r->{name},
+                   $r->{distribution},
+                   $r->{main_module},
+                   encode_json($r) );
   }
 }
 
 sub each_release($app, $cb) {
-  my $db = $app->sql->db;
-  my $results = $db->query('select * FROM releases ORDER BY distribution');
-  my @ins;
-  while (my $row = $results->hash) {
-    my $release = decode_json($row->{data});
-    $cb->($release);
+  my $dbh = $app->dbh;
+
+  my $sth = $dbh->prepare('select * FROM releases ORDER BY distribution');
+  $sth->execute();
+
+  while (my $row = $sth->fetchrow_hashref()) {
+    $cb->(decode_json($row->{data}));
   }
 }
 
 sub write_dependencies ($app) {
-  my $db = $app->sql->db;
+  my $dbh = $app->dbh;
 
-  my @ins;
-  INFO("Loading dependencies");
+  INFO("Setting up dependency table");
+
+  map { $dbh->do($_) }
+    "DROP TABLE IF EXISTS dependency",
+    "CREATE TABLE dependency (
+       distribution varchar(255),
+       relationship varchar(255),
+       module varchar(255),
+       version varchar(255),
+       phase varchar(255))",
+    "CREATE INDEX d_distribution_phase ON dependency(distribution,phase)",
+    "CREATE INDEX d_module ON dependency(module)";
+
+  INFO("Writing dependency table");
+
+  my $ins_sth = $dbh->prepare(
+    "INSERT INTO dependency (distribution, relationship, module, version, phase)
+     VALUES (?,?,?,?,?)" );
+
   $app->each_release(
     sub ($r) {
       return unless $r->{dependency};
       foreach my $d (@{$r->{dependency}}) {
-        push @ins, {
-          distribution => $r->{distribution},
-          %$d };
+        my $values = [$r->{distribution},
+                      $d->{relationship},
+                      $d->{module},
+                      $d->{version},
+                      $d->{phase}];
+
+        $ins_sth->execute(@$values);
       }
     });
-
-  INFO("Writing dependencies");
-
-  $db->query("DROP TABLE IF EXISTS dependency");
-  $db->query("CREATE TABLE dependency (
-distribution varchar(255),
-relationship varchar(255),
-module varchar(255),
-version varchar(255),
-phase varchar(255)
-)");
-
-  my $tx = $db->begin;
-  foreach my $d (@ins) {
-    $db->insert('dependency', $d);
-  }
-  $tx->commit;
 }
 
 
@@ -161,7 +179,8 @@ sub get_releases ($app) {
   my @releases;
 
   my $total = $release_results->total;
-  foreach ( 1..$total ) { ### Downloading $total releases |===[%]    |
+  # This foreach is made so Smart::Comments understand progress :)
+  foreach ( 1..$total ) { ### Downloading $total releases [===|    ] % done
     my $release = $release_results->next;
     push @releases, $release->{data};
   }
@@ -169,6 +188,7 @@ sub get_releases ($app) {
 }
 
 sub filter_releases ($releases) {
+  INFO("Filtering release data from MetaCPAN");
   my %distros;
   foreach my $release (@$releases) {
     my $d = $release->{distribution};
