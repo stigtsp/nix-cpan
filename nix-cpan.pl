@@ -19,9 +19,7 @@
 # --verbose and --debug can be useful options
 
 
-
-
-use v5.36;
+use v5.38;
 use Applify;
 
 use strict;
@@ -42,30 +40,31 @@ use Math::BigInt;
 use Sort::Versions;
 
 use Mojo::File 'path';
-use Mojo::JSON 'decode_json';
+use Cpanel::JSON::XS 'decode_json';
 use Mojo::Template;
 use List::Util 'uniq';
 use Perl6::Junction qw(one none);
-# use MetaCPAN::Client 2.029;
 
 use Module::CoreList;
 use Carp qw(croak);
 use Log::Log4perl qw(:easy);
-
+use DBI;
 use Time::HiRes qw(time);
 
 our $VERSION = 0.01;
 
 our $ERRATA = require(path(path(__FILE__)->dirname, "errata.conf"));
 
+my $db_file_default = "/var/tmp/metacpan-cache.db";
+
 version $VERSION;
-
-
 
 ## option string  => "git_opts" => "Options to pass to git";
 
+option file    => "db_file"   => "SQLite file to store metacpan data in" => $db_file_default;
 
 option bool    => "list_nix_file"  => "Parses Nix file and prints attributes";
+option bool    => "check_updates"  => "Checks your nix-file against the metacpan-latest DB for updated";
 
 option bool    => "generate"       => "Generate a derivation, print it";
 option bool    => "shell"          => "generate: Wrap output in a shell.nix skeleton";
@@ -103,12 +102,66 @@ app {
 
     $app->http_tiny_clear_cache() if $app->clear_cache;
 
+    return $app->run_check_updates if $app->check_updates;
     return $app->run_list_nix_file if $app->list_nix_file;
     return $app->run_generate if $app->generate;
     return $app->run_update if $app->update;
     $app->_script->print_help;
     return 1;
 };
+
+sub dbh ($app) {
+    state $sql = DBI->connect("dbi:SQLite:". $app->db_file, {RaiseError=>1});
+    return $sql;
+}
+
+sub db_get_distro($app, $distro) {
+    my ($json) = $app->dbh->selectrow_array(
+        "SELECT data FROM releases WHERE distribution=?", undef, $distro);
+    return unless $json;
+    return decode_json($json);
+}
+
+sub db_get_module($app, $module) {
+    my ($json) = $app->dbh->selectrow_array(
+        "SELECT data FROM releases WHERE main_module=?", undef, $module);
+    return unless $json;
+    return decode_json($json);
+}
+
+
+
+sub run_check_updates ($app) {
+    my @drvs = parse_nix_file($app->nix_file);
+    foreach (@drvs) {
+        my $state = "UNKNOWN";
+
+        my $cur_attr  = $_->[1];
+        my $cur_ver   = get_attr($_->[3], "version");
+        my $cur_name  = get_attr($_->[3], "name");
+
+        my $db = $app->db_get_distro($cur_name);
+        if (!$db) {
+            $state = "NOTFOUND";
+        } else {
+            my $db_ver = $db->{version};
+            $db_ver =~ s/^v//;
+            my $ver_cmp = (versioncmp($cur_ver, $db_ver) == -1);
+            if ( $ver_cmp == 1 ) {
+                $state = "UPDATE to $db_ver";
+            } elsif ( $ver_cmp == 0 ) {
+                $state = "SAME";
+            } elsif ( $ver_cmp == -1) {
+                $state = "DOWNGRADE to $db_ver";
+            }
+        }
+
+        printf("%-40s %-40s %-10s (%s)\n",
+               $cur_attr, $cur_name, $cur_ver, $state);
+
+    }
+    return 0;
+}
 
 sub run_list_nix_file ($app) {
     my @drvs = parse_nix_file($app->nix_file);
