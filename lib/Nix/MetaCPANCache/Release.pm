@@ -4,6 +4,7 @@ use experimental qw(class);
 
 class Nix::MetaCPANCache::Release {
   use Cpanel::JSON::XS qw(decode_json);
+  use Sort::Versions qw(versioncmp);
   field $name :param;
   field $distribution :param;
   field $main_module :param;
@@ -21,9 +22,29 @@ class Nix::MetaCPANCache::Release {
   method main_module  { return $main_module }
   method data         { return $data }
 
+
+  method checksum_sha256 {
+    return $data->{checksum_sha256};
+  }
+
+  method download_url {
+    return $data->{download_url};
+  }
+
+
+  method version {
+    # Normalizing (i.e. removing v prefix)
+    my $v = $data->{version};
+    $v=~s/^v//;
+    return $v;
+  }
+
   method dependency {
     return $data->{dependency} // [];
   }
 
+  method newer_than ($ver) {
+    return versioncmp($self->version, $ver) > 0;
+  }
 
 }

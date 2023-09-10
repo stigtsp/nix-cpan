@@ -6,11 +6,13 @@ use experimental qw(class);
 class Nix::PerlPackages {
   use Log::Log4perl qw(:easy);
   use Nix::PerlDrv;
-  field $nix_file :param;
+  field $nix_file          :param;
+  field $nix_file_contents = undef;
   field @drvs;
 
   ADJUST {
     die "$nix_file does not exist" unless -f $nix_file;
+    $self->parse_nix_file();
   };
 
   method drvs() {
@@ -33,26 +35,27 @@ class Nix::PerlPackages {
     my $i = 0;
 
     my $start = time();
-
+    $nix_file_contents="";
     while (my $l = <$fh>) {
-        if ($l=~m/(\s+)(([\w-]+)\s+=\s+buildPerl(Package|Module)\s+(?:rec)?\s*)\{/) {
-            %in = (
-                ws          => $1,
-                prepart     => $2,
-                attrname    => $3,
-                build_fun   => $4,
-            );
-            DEBUG("parse_nix_file: Found $in{attrname}");
-        } elsif ( %in && $l =~ m/^$in{ws}\};/ ) {
-            DEBUG("parse_nix_file: Found end of $in{attrname}");
-            %in = ();
-        } elsif ( %in ) {
-            DEBUG("parse_nix_file: Line $i to $in{attrname} ## $l");
-            my $h = $attr->{ $in{attrname} } //= { %in };
-            push @{$h->{lines}}, [$i, $l];
-            $h->{part} .= $l;
-        }
-        $i++;
+      $nix_file_contents .= $l;
+      if ($l=~m/(\s+)(([\w-]+)\s+=\s+buildPerl(Package|Module)\s+(?:rec)?\s*)\{/) {
+        %in = (
+          ws          => $1,
+          prepart     => $2,
+          attrname    => $3,
+          build_fun   => $4,
+      );
+        DEBUG("parse_nix_file: Found $in{attrname}");
+      } elsif ( %in && $l =~ m/^$in{ws}\};/ ) {
+        DEBUG("parse_nix_file: Found end of $in{attrname}");
+        %in = ();
+      } elsif ( %in ) {
+        DEBUG("parse_nix_file: Line $i to $in{attrname} ## $l");
+        my $h = $attr->{ $in{attrname} } //= { %in };
+        push @{$h->{lines}}, [$i, $l];
+        $h->{part} .= $l;
+      }
+      $i++;
     }
     close $fh;
 
@@ -67,6 +70,23 @@ class Nix::PerlPackages {
     return @drvs;
   }
 
+  method update_inplace($drv) {
+    my $buf = $nix_file_contents;
 
+    my $old = $drv->orig_part;
+    my $new = $drv->part;
+
+    # use Data::Dumper;
+    # die Dumper($old, $new);
+
+    $buf =~ s/\Q$old\E/$new/gs;
+
+    open my $wh, ">", $nix_file;
+    print $wh $buf;
+    close $wh;
+
+    $self->parse_nix_file;
+
+  }
 
 }

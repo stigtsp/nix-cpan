@@ -4,11 +4,13 @@ use experimental qw(class multidimensional);
 
 class Nix::PerlDrv {
   use Log::Log4perl qw(:easy);
+  use Nix::Util qw(sha256_hex_to_sri);
   use Regexp::Common;
   use Smart::Comments -ENV;
+  use Text::Diff;
 
-  field $prepart   :param;
-  field $attrname  :param;
+  field $prepart        :param;
+  field $attrname       :param;
   field $orig_build_fun :param(build_fun);
   field $orig_part      :param(part);
 
@@ -19,6 +21,10 @@ class Nix::PerlDrv {
     $build_fun = $orig_build_fun;
     $part      = $orig_part;
   };
+
+  method orig_part {
+    return $orig_part;
+  }
 
   method dirty {
     return !($orig_build_fun eq $build_fun &&
@@ -40,8 +46,8 @@ class Nix::PerlDrv {
     $part =~ s/($attr\s*=\s*)$RE{quoted}{-keep};/$1"$val";/g;
   }
 
-  method get_attr ($attr) {
-    my $cnt = $part =~ m/$attr\s*=\s*$RE{quoted}{-keep};/;
+  method get_attr ($attr, $str=$part) {
+    my $cnt = $str =~ m/$attr\s*=\s*$RE{quoted}{-keep};/;
     my $val = $1;
     return unless defined $val;
     die "get_attr $attr found more than 1 in part: $part" if $cnt>1;
@@ -49,9 +55,9 @@ class Nix::PerlDrv {
     return $val;
   }
 
-  method get_attr_list ($attr) {
+  method get_attr_list ($attr, $str=$part) {
     ### get_attr_list text: $text
-    my ($val) = $part =~ m/ $attr\s*=\s*
+    my ($val) = $str =~ m/ $attr\s*=\s*
                             $RE{balanced}{-parens=>'[]'}
                           /gx;
 
@@ -63,9 +69,45 @@ class Nix::PerlDrv {
     return @ret;
   }
 
+  method version {
+    return $self->get_attr("version");
+  }
+
+  method name {
+    return $self->get_attr("name");
+  }
 
   method attrname {
     return $attrname;
   }
+
+  method part {
+    return $part;
+  }
+
+  method update_from_metacpan ($mc) {
+    my $version = $mc->version;
+    my $hash    = sha256_hex_to_sri($mc->checksum_sha256);
+    my $url     = $mc->download_url;
+    $url =~ s|^https://cpan.metacpan.org/|mirror://cpan/|;
+
+    $self->set_attrs(
+      version => $version,
+      url     => $url,
+      hash    => $hash,
+    );
+
+    warn diff \$orig_part, \$part;
+  }
+
+  method git_message {
+    if ($self->dirty) {
+      my $prev_ver = $self->get_attr("version", $orig_part);
+      my $new_ver  = $self->get_attr("version");
+      return "perlPackages." . $self->attrname . ": $prev_ver -> $new_ver";
+    }
+    return;
+  }
+
 
 }
