@@ -30,7 +30,7 @@ subcommand update_db => "Update MetaCPANCache" => sub {
 };
 
 subcommand update => "Update one or more perlPackage derivations" => sub {
-  option bool => "inplace" => "Write changes to nix_file";
+  option bool => "inplace" => "Write changes to nix_file" => 0;
 };
 
 
@@ -106,7 +106,10 @@ sub command_update ($app, @attrs) {
   INFO("Updates for ".scalar(@updated)." packages, ok ".scalar(@ok).", failed ".scalar(@fail));
 
   foreach my $d (@updated) { ### Updating inplace [===|    ] % done
-    $pp->update_inplace($d);
+    if ($app->inplace) {
+      $pp->update_inplace($d);
+    }
+
   }
 
   return 0;
