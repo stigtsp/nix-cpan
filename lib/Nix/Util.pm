@@ -8,7 +8,7 @@ use Smart::Comments -ENV;
 use MIME::Base64;
 use Log::Log4perl qw(:easy);
 
-our @EXPORT_OK = qw(sha256_hex_to_sri distro_name_to_attr license_map render_license);
+our @EXPORT_OK = qw(sha256_hex_to_sri distro_name_to_attr license_map render_license attr_is_reserved);
 
 sub sha256_hex_to_sri ($hex) {
     my $num = Math::BigInt->new("0x$hex")->to_bytes();
@@ -239,6 +239,23 @@ sub render_license {
     WARN("License '$cpan_license' is ambiguous, please verify") if $amb;
     return $license_line;
 }
+
+sub attr_is_reserved {
+    my ($pkg) = @_;
+
+    return $pkg =~ /^(?: assert    |
+                         else      |
+                         if        |
+                         import    |
+                         in        |
+                         inherit   |
+                         let       |
+                         rec       |
+                         then      |
+                         while     |
+                         with      )$/x;
+}
+
 
 
 1;
