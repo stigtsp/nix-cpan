@@ -5,7 +5,7 @@ use experimental qw(class);
 
 class Nix::PerlPackages {
   use Log::Log4perl qw(:easy);
-  use Nix::PerlDrv;
+  use Nix::PerlPackages::Drv;
   field $nix_file          :param;
   field $nix_file_contents = undef;
   field @drvs;
@@ -61,7 +61,7 @@ class Nix::PerlPackages {
 
     foreach my $k (sort keys %$attr) {
         my $h = $attr->{$k};
-        push @drvs, Nix::PerlDrv->new(
+        push @drvs, Nix::PerlPackages::Drv->new(
           prepart   => $h->{prepart},
           attrname  => $h->{attrname},
           build_fun => $h->{build_fun},

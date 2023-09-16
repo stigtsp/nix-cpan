@@ -2,10 +2,11 @@ use v5.38;
 use strict;
 use experimental qw(class multidimensional);
 
-class Nix::PerlDrv {
+class Nix::PerlPackages::Drv {
   use Log::Log4perl qw(:easy);
-  use Nix::Util qw(sha256_hex_to_sri);
+  use Nix::Util qw(sha256_hex_to_sri distro_name_to_attr);
   use Regexp::Common;
+  use Perl6::Junction qw(any);
   use Smart::Comments -ENV;
   use Text::Diff;
 
@@ -43,7 +44,8 @@ class Nix::PerlDrv {
     unless (defined $old_val) {
         die "$attr wasn't defined previously";
     }
-    $part =~ s/($attr\s*=\s*)$RE{quoted}{-keep};/$1"$val";/g;
+    #$part =~ s/($attr\s*=\s*)$RE{quoted}{-keep};/$1"$val";/g;
+    $part =~ s/($attr\s*=\s*)"$old_val";/$1"$val";/g;
   }
 
   method get_attr ($attr, $str=$part) {
@@ -58,8 +60,8 @@ class Nix::PerlDrv {
   method get_attr_list ($attr, $str=$part) {
     ### get_attr_list text: $text
     my ($val) = $str =~ m/ $attr\s*=\s*
-                            $RE{balanced}{-parens=>'[]'}
-                          /gx;
+                           $RE{balanced}{-parens=>'[]'};
+                         /gx;
 
     return unless $val;
 
@@ -69,12 +71,34 @@ class Nix::PerlDrv {
     return @ret;
   }
 
+  method set_attr_list ($attr, @vals) {
+    # my @has = $self->get_attr_list($attr, $str);
+    my $attr_str = "[ ". join(" ", sort @vals)." ]";
+    $part=~s/$attr\s*=\s*$RE{balanced}{-parens=>'[]'}/$attr = $attr_str/;
+  }
+
   method version {
     return $self->get_attr("version");
   }
 
   method name {
     return $self->get_attr("name");
+  }
+
+  method set_build_inputs (@attrs) {
+    $self->set_attr_list("buildInputs", @attrs);
+  }
+
+  method set_propagated_build_inputs (@attrs) {
+    $self->set_attr_list("propagatedBuildInputs", @attrs);
+  }
+
+  method build_inputs {
+    return $self->get_attr_list('buildInputs');
+  }
+
+  method propagated_build_inputs {
+    return $self->get_attr_list('propagatedBuildInputs');
   }
 
   method attrname {
@@ -89,6 +113,7 @@ class Nix::PerlDrv {
     my $version = $mc->version;
     my $hash    = sha256_hex_to_sri($mc->checksum_sha256);
     my $url     = $mc->download_url;
+
     $url =~ s|^https://cpan.metacpan.org/|mirror://cpan/|;
 
     $self->set_attrs(
@@ -96,6 +121,11 @@ class Nix::PerlDrv {
       url     => $url,
       hash    => $hash,
     );
+
+    my ( $buildInputs, $propagatedBuildInputs ) =
+      [  grep { $_->{phase} eq any(qw(build configure test)) } @{$mc->dependency} ],
+      [  grep { $_->{phase} eq any(qw(runtime)) } @{$mc->dependency} ];
+
 
     warn diff \$orig_part, \$part;
   }
