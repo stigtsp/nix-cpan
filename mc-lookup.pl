@@ -9,4 +9,4 @@ my $distro = $ARGV[0] || die "$0 <distribution>\n";
 
 
 my $mc = Nix::MetaCPANCache->new();
-say encode_json( $mc->get_by_distribution($distro)->data );
+say encode_json( $mc->get_by(distribution =>$distro)->data );

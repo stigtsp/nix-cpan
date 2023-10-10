@@ -26,12 +26,13 @@ class Nix::MetaCPANCache {
     return $dbh;
   }
 
-  method get_by_distribution ($distribution) {
-     my $h = $self->dbh->selectrow_hashref("SELECT * FROM releases WHERE distribution=?", undef,
-                                           $distribution);
+  method get_by ($key, $val) {
+     my $h = $self->dbh->selectrow_hashref("SELECT * FROM releases WHERE $key=?", undef,
+                                           $val);
      return unless $h;
-     return Nix::MetaCPANCache::Release->new(%$h);
+     return Nix::MetaCPANCache::Release->new(%$h, _mcc => $self);
   }
+
 
   method db_file_exists {
     return -f $db_file;

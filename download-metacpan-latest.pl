@@ -105,6 +105,7 @@ sub write_releases($app, $releases) {
     "INSERT INTO releases (name, distribution, main_module, data) VALUES (?,?,?,?)");
   my $i=0;
   foreach my $r (@$releases) {
+    DEBUG("Writing name: $r->{name} distribution: $r->{distribution}, main_module: $r->{main_module}");
     $sth->execute( $r->{name},
                    $r->{distribution},
                    $r->{main_module},

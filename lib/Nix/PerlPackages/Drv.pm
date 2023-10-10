@@ -44,7 +44,6 @@ class Nix::PerlPackages::Drv {
     unless (defined $old_val) {
         die "$attr wasn't defined previously";
     }
-    #$part =~ s/($attr\s*=\s*)$RE{quoted}{-keep};/$1"$val";/g;
     $part =~ s/($attr\s*=\s*)"$old_val";/$1"$val";/g;
   }
 
@@ -93,6 +92,10 @@ class Nix::PerlPackages::Drv {
     $self->set_attr_list("propagatedBuildInputs", @attrs);
   }
 
+  method check_inputs {
+    return $self->get_attr_list('checkInputs');
+  }
+
   method build_inputs {
     return $self->get_attr_list('buildInputs');
   }
@@ -122,9 +125,8 @@ class Nix::PerlPackages::Drv {
       hash    => $hash,
     );
 
-    my ( $buildInputs, $propagatedBuildInputs ) =
-      [  grep { $_->{phase} eq any(qw(build configure test)) } @{$mc->dependency} ],
-      [  grep { $_->{phase} eq any(qw(runtime)) } @{$mc->dependency} ];
+    my $buildInputs           = $mc->dependency(qw(build configure test));
+    my $propatatedBuildInputs = $mc->dependency(qw(runtime));
 
 
     warn diff \$orig_part, \$part;
