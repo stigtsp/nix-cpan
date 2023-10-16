@@ -8,6 +8,7 @@ mkShell {
     sqlite
     # perl modules
     Applify
+    ArrayDiff
     CpanelJSONXS
     DBDSQLite
     FileUtilTempdir
