@@ -14,7 +14,7 @@ use lib qw(lib);
 
 use Nix::PerlPackages;
 use Nix::MetaCPANCache;
-use IPC::Cmd;
+use IPC::Cmd qw(run);
 
 use experimental qw(signatures try);
 
@@ -120,6 +120,7 @@ sub command_update ($app, @attrs) {
         push @ok, [$a];
       }
     } catch ($e) {
+      warn $e;
       push @fail, [$a, $e];
     }
   }
@@ -131,7 +132,7 @@ sub command_update ($app, @attrs) {
     if ($app->inplace || $app->commit) {
       $pp->update_inplace($d);
       if ($app->commit) {
-
+        $app->git_cmd("commit","--no-gpg-sign","-m", $d->git_message);
       }
     }
 
@@ -144,9 +145,10 @@ sub command_update ($app, @attrs) {
    my $file = $app->nix_file;
    die "git_cmd: Invalid nix_file $file" unless $file && -f $file;
    my $dir = dirname($file);
+   my $rel_file = basename($file);
 
-   my ($ok, $err, $buf) = run( command => ["git", "-C", $dir, @args] );
-   die $err unless $ok;
+   my ($ok, $err, $buf) = run( command => ["git", "-C", $dir, @args, $rel_file] );
+   die "$err: ".join ("", @$buf) unless $ok;
    return join "", $buf->@*;
 }
 
@@ -178,7 +180,6 @@ sub update_attr ($app, $metacpan, $pp, $attrname) {
   }
 
   unless ($mc->newer_than($drv->version)) {
-    INFO("No update for " . $drv->attrname);
     return;
   }
 

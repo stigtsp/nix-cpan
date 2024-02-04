@@ -44,7 +44,7 @@ class Nix::PerlPackages::Drv {
     unless (defined $old_val) {
         die "$attr wasn't defined previously";
     }
-    $part =~ s/($attr\s*=\s*)"$old_val";/$1"$val";/g;
+    $part =~ s/($attr\s*=\s*)"\Q$old_val\E";/$1"$val";/g;
   }
 
   method get_attr ($attr, $str=$part) {
@@ -125,8 +125,8 @@ class Nix::PerlPackages::Drv {
       hash    => $hash,
     );
 
-    my $buildInputs           = $mc->dependency(qw(build configure test));
-    my $propatatedBuildInputs = $mc->dependency(qw(runtime));
+    my $buildInputs           = $mc->build_inputs();
+    my $propatatedBuildInputs = $mc->propagated_build_inputs();
 
 
     warn diff \$orig_part, \$part;
