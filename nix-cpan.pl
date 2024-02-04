@@ -6,6 +6,7 @@ use Applify;
 
 use strict;
 use warnings;
+use Array::Diff;
 use Log::Log4perl qw(:easy);
 use Smart::Comments;
 use File::Basename;
@@ -84,12 +85,19 @@ sub command_compare ($app, @args) {
     printf("%-40s %-40s %-10s %-10s (%s)\n",
            $drv->attrname, $name, $drv->version, $mc->version, $state);
 
-    say "|.. " . join(", ", $drv->build_inputs);
-    say "|++ " . join(", ", $mc->build_inputs);
-
-
-    say "#.. " . join(", ", $drv->propagated_build_inputs);
-    say "#++ " . join(", ", $mc->propagated_build_inputs);
+    for my $k (qw(build_inputs propagated_build_inputs)) {
+      my @cur = $drv->$k;
+      my @new = $mc->$k;
+      my $diff = Array::Diff->diff(\@cur, \@new);
+      if ($diff->count) {
+        if ($diff->added) {
+          say "$k ADD: ".join(" ", @{$diff->added});
+        }
+        if ($diff->deleted) {
+          say "$k DEL: ".join(" ", @{$diff->deleted});
+        }
+      }
+    }
   }
 }
 
