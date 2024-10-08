@@ -10,13 +10,28 @@ class Nix::MetaCPANCache {
   use IO::Zlib qw(:gzip_external 1);
   use Log::Log4perl qw(:easy);
   use Smart::Comments;
+  use File::XDG;
 
-  field $cache_file :param = "/var/tmp/metacpan-download-cache.jsonl.gz";
-  field $db_file    :param = "/var/tmp/metacpan-cache.db";
+  field $cache_file :param = undef;
+  field $db_file    :param = undef;
 
   field $transaction_size :param = 2000;
 
   ADJUST {
+    my $xdg = File::XDG->new(name => "nix-cpan", api => 1);
+
+    my $makeCache = sub ($f) {
+      my $dir = $xdg->cache_home;
+      unless (-d $dir ) {
+        INFO("Creating cache directory ".$dir);
+        $dir->mkdir;
+      }
+      return $dir->child($f);
+    };
+
+    $db_file    //= $makeCache->("metacpan-download-cache.jsonl.gz");
+    $cache_file //= $makeCache->("metacpan-cache.db");
+
     ERROR("Missing $db_file, run update()") unless -f $db_file;
   };
 
