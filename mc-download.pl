@@ -11,4 +11,4 @@ Log::Log4perl->easy_init({
 
 my $mc = Nix::MetaCPANCache->new();
 
-$mc->update;
+$mc->refresh;

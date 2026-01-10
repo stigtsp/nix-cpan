@@ -12,7 +12,7 @@ use Smart::Comments;
 use File::Basename;
 use Perl6::Junction qw(any);
 use lib qw(lib);
-
+use Cpanel::JSON::XS qw(encode_json);
 use Nix::PerlPackages;
 use Nix::MetaCPANCache;
 use IPC::Cmd qw(run);
@@ -29,10 +29,10 @@ option file    => "nix_file"       => "Path to perl-packages.nix" => "pkgs/top-l
 #option string => "download_cache" => "Path to store responses from MetaCPAN API";
 
 subcommand compare => "Compare perl-packages.nix against MetaCPANCache" => sub {
-
+  option bool => "all" => "Show all packages, even if no op";
 };
 
-subcommand update_db => "Update MetaCPANCache" => sub {
+subcommand refresh => "Update MetaCPAN cache" => sub {
 };
 
 subcommand update => "Update one or more perlPackage derivations" => sub {
@@ -51,11 +51,14 @@ sub init_logging {
     Log::Log4perl::MDC->put('distro', q{});
 }
 
-sub command_refresh_db ($app) {
+sub command_refresh ($app) {
   $app->init_logging;
+
   my $mcc = Nix::MetaCPANCache->new;
   $mcc->clear_caches();
-  $mcc->update();
+
+  INFO("Downloading and indexing, this takes some time ...");
+  $mcc->refresh();
   return 0;
 }
 
@@ -73,6 +76,10 @@ sub command_compare ($app, @args) {
   }
   foreach my $drv (@drvs) {
     my $name = $drv->name;
+    unless ($drv->version) {
+      WARN("$name has no version");
+      next;
+    }
     my $mc = $metacpan->get_by(distribution => $name);
     unless ($mc) {
       WARN("Cannot find $name in MetaCPAN");
@@ -82,27 +89,43 @@ sub command_compare ($app, @args) {
     if ($mc->newer_than($drv->version)) {
       $state = "UPDATE";
     }
-    printf("%-40s %-40s %-10s %-10s (%s)\n",
-           $drv->attrname, $name, $drv->version, $mc->version, $state);
 
+    unless ($app->all) {
+      next if $state eq "NA";
+    }
+
+
+    my $depDiff = "";
     for my $k (qw(build_inputs propagated_build_inputs)) {
-      my @cur = $drv->$k;
+      my @cur =
+        grep { ! /^pkgs\./} # skip deps with pkgs. prefix as they are not from perlPackages
+        $drv->$k;
       my @new = $mc->$k;
       my $diff = Array::Diff->diff(\@cur, \@new);
       if ($diff->count) {
-        if ($diff->added) {
-          say "$k ADD: ".join(" ", @{$diff->added});
-        }
-        if ($diff->deleted) {
-          say "$k DEL: ".join(" ", @{$diff->deleted});
-        }
+        $depDiff .= encode_json([
+          ( map { "+".$_ } grep { $_ } @{$diff->added} ),
+          ( map { "-".$_ } grep { $_ } @{$diff->deleted} )
+      ]);
       }
     }
+
+
+
+    printf("%-40s %-40s %-10s %-10s (%s) %s\n",
+           $drv->attrname, $name, $drv->version, $mc->version, $state, $depDiff);
+
   }
 }
 
 sub compare_dependencies($app, $drv, $mc) {
 
+
+}
+
+
+sub command_generate ($app, @attrs) {
+  $app->init_logging;
 
 }
 

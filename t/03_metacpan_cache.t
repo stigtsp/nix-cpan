@@ -14,7 +14,10 @@ my $mcc = new_ok( "Nix::MetaCPANCache" => [ cache_file => 't/var/metacpan-downlo
 
 # We only run update if the db file doesnt exist, since it is a bit slowish
 unless (-f $db_test_file) {
-  $mcc->update();
+  my $releases = $mcc->cached_download_releases();
+  $mcc->write_releases($releases);
+  $mcc->write_dependencies();
+
 }
 
 my $moose = $mcc->get_by(distribution => "Moose");
@@ -101,6 +104,10 @@ is_deeply( [ map { $_->attrname } $cryptx->dependency([qw(runtime)])->@* ],
 
 is_deeply( [ map { $_->attrname } $cryptx->dependency([qw(build test configure)])->@* ],
            [  ]);
+
+my $cryptx_drv = $cryptx->generate_drv();
+
+diag $cryptx_drv;
 
 
 done_testing();

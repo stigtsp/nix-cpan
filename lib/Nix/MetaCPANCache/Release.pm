@@ -80,4 +80,12 @@ class Nix::MetaCPANCache::Release {
     return @ret;
   }
 
+  method generate_drv { # XXX: This should return a PerlPackages::Drv object instead?
+    my $template = ';
+  <%= $attrname %> = <%= $build_fun %> {
+  }
+';
+
+  }
+
 }

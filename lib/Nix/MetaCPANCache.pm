@@ -90,12 +90,6 @@ class Nix::MetaCPANCache {
     } else {
       INFO("Downloading release data from MetaCPAN API (slow)");
       my $releases = $self->download_releases;
-      my $wh = IO::Zlib->new($cache_file, "wb3") || die $!;
-      foreach (@$releases) {
-        print $wh encode_json($_) . "\n";
-      }
-      $wh->close;
-      return $releases;
     }
   }
 
@@ -116,7 +110,7 @@ class Nix::MetaCPANCache {
     return [ @releases ];
   }
 
-  method update {
+  method refresh {
     INFO("Getting releases");
     my $releases = $self->cached_download_releases();
 
