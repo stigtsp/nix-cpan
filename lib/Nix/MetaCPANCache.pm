@@ -98,7 +98,7 @@ class Nix::MetaCPANCache {
 
     my $release_results = $mc->release({
       all => [ { status     => 'latest' },
-               { authorized => !!1      } ]
+               { authorized => 'true'   } ]
     });
     my @releases;
     my $total = $release_results->total;
