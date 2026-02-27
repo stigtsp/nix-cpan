@@ -14,8 +14,13 @@ jobs:
       - name: Perlcritic
         uses: Difegue/action-perlcritic@master
         with:
-          args: nix-update-cpan.pl
+          args: nix-cpan.pl
   test:
-    - name: Use Nix
-      uses: aldoborrero/use-nix-action@v2
-    - run: prove -lv t/*
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v3
+      - name: Use Nix
+        uses: aldoborrero/use-nix-action@v2
+      - name: Run tests
+        run: nix-shell --run "prove -lv t/*"

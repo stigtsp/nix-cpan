@@ -9,6 +9,7 @@ class Nix::PerlPackages {
   field $nix_file          :param;
   field $nix_file_contents = undef;
   field @drvs;
+  field %all_attrnames;
 
   ADJUST {
     die "$nix_file does not exist" unless -f $nix_file;
@@ -27,17 +28,22 @@ class Nix::PerlPackages {
   method parse_nix_file() {
     # TODO: Make parsing more proper
     @drvs = ();
+    %all_attrnames = ();
 
     open(my $fh, "<", $nix_file) || die $!;
 
     my $attr = {};
     my %in;
     my $i = 0;
+    my $depth = 0;
 
     my $start = time();
     $nix_file_contents="";
     while (my $l = <$fh>) {
       $nix_file_contents .= $l;
+      if ($depth == 1 && $l =~ /^\s{2}([\w-]+)\s*=/) {
+        $all_attrnames{$1} = 1;
+      }
       if ($l=~m/(\s+)(([\w-]+)\s+=\s+buildPerl(Package|Module)\s+(?:rec)?\s*)\{/) {
         %in = (
           ws          => $1,
@@ -55,6 +61,9 @@ class Nix::PerlPackages {
         push @{$h->{lines}}, [$i, $l];
         $h->{part} .= $l;
       }
+      my $open_cnt = () = ($l =~ /\{/g);
+      my $close_cnt = () = ($l =~ /\}/g);
+      $depth += $open_cnt - $close_cnt;
       $i++;
     }
     close $fh;
@@ -70,6 +79,10 @@ class Nix::PerlPackages {
     return @drvs;
   }
 
+  method all_attrnames() {
+    return keys %all_attrnames;
+  }
+
   method update_inplace($drv) {
     my $buf = $nix_file_contents;
 
@@ -79,7 +92,11 @@ class Nix::PerlPackages {
     # use Data::Dumper;
     # die Dumper($old, $new);
 
-    $buf =~ s/\Q$old\E/$new/gs;
+    my $count = () = ($buf =~ /\Q$old\E/gs);
+    if ($count != 1) {
+      die "update_inplace expected exactly one match for ".$drv->attrname.", got $count";
+    }
+    $buf =~ s/\Q$old\E/$new/s;
 
     open my $wh, ">", $nix_file;
     print $wh $buf;

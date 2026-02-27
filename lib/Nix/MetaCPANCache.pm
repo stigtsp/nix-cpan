@@ -29,8 +29,8 @@ class Nix::MetaCPANCache {
       return $dir->child($f);
     };
 
-    $db_file    //= $makeCache->("metacpan-download-cache.jsonl.gz");
-    $cache_file //= $makeCache->("metacpan-cache.db");
+    $db_file    //= $makeCache->("metacpan-cache.db");
+    $cache_file //= $makeCache->("metacpan-download-cache.jsonl.gz");
 
     ERROR("Missing $db_file, run update()") unless -f $db_file;
   };
@@ -46,6 +46,19 @@ class Nix::MetaCPANCache {
                                            $val);
      return unless $h;
      return Nix::MetaCPANCache::Release->new(%$h, _mcc => $self);
+  }
+
+  method resolve_module ($module) {
+    my $release = $self->get_by(main_module => $module);
+    return $release if $release;
+
+    my ($distribution) = $self->dbh->selectrow_array(
+      "SELECT distribution FROM provide WHERE module=?",
+      undef,
+      $module
+    );
+    return unless $distribution;
+    return $self->get_by(distribution => $distribution);
   }
 
 
@@ -70,7 +83,7 @@ class Nix::MetaCPANCache {
   }
 
   method clear_db_cache {
-    if (-f $cache_file) {
+    if (-f $db_file) {
       INFO("Removing db cache: $db_file");
       unlink($db_file);
     }
@@ -90,6 +103,12 @@ class Nix::MetaCPANCache {
     } else {
       INFO("Downloading release data from MetaCPAN API (slow)");
       my $releases = $self->download_releases;
+      my $fh = IO::Zlib->new($cache_file, "wb9") || die $!;
+      foreach my $release (@$releases) {
+        print {$fh} encode_json($release)."\n";
+      }
+      $fh->close;
+      return $releases;
     }
   }
 
@@ -132,13 +151,18 @@ class Nix::MetaCPANCache {
 
     map { $dbh->do($_) }
       "DROP TABLE IF EXISTS releases",
+      "DROP TABLE IF EXISTS provide",
       "CREATE TABLE releases (
               name varchar(255) primary key,
               distribution varchar(255),
               main_module varchar(255),
               data JSON)",
+      "CREATE TABLE provide (
+              module varchar(255) primary key,
+              distribution varchar(255))",
       "CREATE INDEX r_distribution ON releases(distribution)",
-      "CREATE INDEX r_main_module ON releases(main_module)";
+      "CREATE INDEX r_main_module ON releases(main_module)",
+      "CREATE INDEX p_distribution ON provide(distribution)";
 
     INFO("Writing releases");
 
@@ -146,12 +170,28 @@ class Nix::MetaCPANCache {
 
     my $sth = $dbh->prepare(
       "INSERT INTO releases (name, distribution, main_module, data) VALUES (?,?,?,?)");
+    my $provide_sth = $dbh->prepare(
+      "INSERT OR IGNORE INTO provide (module, distribution) VALUES (?,?)");
     my $i=0;
     foreach my $r (@$releases) {
       $sth->execute( $r->{name},
                      $r->{distribution},
                      $r->{main_module},
                      encode_json($r) );
+
+      my %mods;
+      if ($r->{main_module}) {
+        $mods{$r->{main_module}} = 1;
+      }
+      if ($r->{provides} && ref($r->{provides}) eq "HASH") {
+        foreach my $module (keys $r->{provides}->%*) {
+          $mods{$module} = 1 if $module;
+        }
+      }
+      foreach my $module (keys %mods) {
+        $provide_sth->execute($module, $r->{distribution});
+      }
+
       if (++$i % $transaction_size == 0) {
         DEBUG("Committing $i");
         $dbh->commit;

@@ -4,13 +4,14 @@ use v5.38;
 use strict;
 use Exporter 'import';
 our @EXPORT_OK = qw(errata);
+our $errata;
 
 sub errata {
-        return %errata;
+        return $errata;
 }
 
 # This errata originated from the previously used  cpan2nix tool
-our $errata = {
+$errata = {
     ignoreModule => [ "URI::_generic",
                       "Catalyst::Engine::CGI",
                       "Catalyst::Engine::FastCGI",
@@ -144,7 +145,7 @@ our $errata = {
         "Alien-Build"                      => [ "PkgConfig" ],
         "Any-Moose"                        => [ "Mouse", "Moose"],
         "Crypt-PKCS10"                     => [ "Convert::ASN1" ],
-        "Crypt-SSLeay"                     => [ "LWP::Protocol::https"
+        "Crypt-SSLeay"                     => [ "LWP::Protocol::https",
                                                 "Bytes::Random::Secure" ],
         "GDTextUtil"                       => [ "GD" ],
         "Gtk2-Unique"                      => [ "Cairo", "Pango"],

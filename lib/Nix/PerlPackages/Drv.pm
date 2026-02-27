@@ -8,7 +8,6 @@ class Nix::PerlPackages::Drv {
   use Regexp::Common;
   use Perl6::Junction qw(any);
   use Smart::Comments -ENV;
-  use Text::Diff;
 
   field $prepart        :param;
   field $attrname       :param;
@@ -76,6 +75,40 @@ class Nix::PerlPackages::Drv {
     $part=~s/$attr\s*=\s*$RE{balanced}{-parens=>'[]'}/$attr = $attr_str/;
   }
 
+  method has_attr_assignment($attr, $str=$part) {
+    return $str =~ /$attr\s*=/ ? 1 : 0;
+  }
+
+  method attr_list_is_simple($attr, $str=$part) {
+    my ($expr) = $str =~ m/$attr\s*=\s*(.*?);/s;
+    return 0 unless defined $expr;
+    return $expr =~ /^\s*\[[^\]]*\]\s*$/s ? 1 : 0;
+  }
+
+  method set_or_add_attr_list($attr, @vals) {
+    my @sorted = sort @vals;
+
+    if ($self->attr_list_is_simple($attr)) {
+      if (@sorted) {
+        $self->set_attr_list($attr, @sorted);
+      }
+      return;
+    }
+    return if $self->has_attr_assignment($attr); # keep complex expressions untouched
+    return unless @sorted; # do not add empty attr lists
+
+    my $attr_str = "[ ". join(" ", @sorted)." ]";
+    my $indent = "    ";
+    if ($part =~ /^(\s+)\w+\s*=/m) {
+      $indent = $1;
+    }
+    my $line = $indent.$attr." = ".$attr_str.";\n";
+    if ($part =~ s/^(\s*meta\s*=)/$line$1/m) {
+      return;
+    }
+    $part .= $line;
+  }
+
   method version {
     return $self->get_attr("version");
   }
@@ -125,11 +158,17 @@ class Nix::PerlPackages::Drv {
       hash    => $hash,
     );
 
-    my $buildInputs           = $mc->build_inputs();
-    my $propatatedBuildInputs = $mc->propagated_build_inputs();
+    my @build_inputs = $mc->build_inputs();
+    my @existing_build_inputs = $self->build_inputs();
+    push @build_inputs,
+      grep { /^pkgs\./ } @existing_build_inputs;
+    $self->set_or_add_attr_list("buildInputs", @build_inputs);
 
-
-    warn diff \$orig_part, \$part;
+    my @propagated_build_inputs = $mc->propagated_build_inputs();
+    my @existing_propagated_build_inputs = $self->propagated_build_inputs();
+    push @propagated_build_inputs,
+      grep { /^pkgs\./ } @existing_propagated_build_inputs;
+    $self->set_or_add_attr_list("propagatedBuildInputs", @propagated_build_inputs);
   }
 
   method git_message {

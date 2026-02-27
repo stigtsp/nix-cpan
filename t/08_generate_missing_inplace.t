@@ -1,0 +1,120 @@
+use v5.38;
+use Test::More;
+use File::Temp qw(tempdir);
+use lib qw(t/lib);
+use Test::CommandUtil qw(run_nix_cpan);
+
+use_ok("Nix::MetaCPANCache");
+
+my $tmpdir = tempdir(CLEANUP => 1);
+my $cache_home = "$tmpdir/xdg";
+my $cache_ns = "$cache_home/nix-cpan";
+mkdir $cache_home or die $!;
+mkdir $cache_ns or die $!;
+
+my $nix_file = "$tmpdir/perl-packages-mini.nix";
+open my $fh, ">", $nix_file or die $!;
+print {$fh} <<'NIX';
+{
+  Root = buildPerlPackage {
+    name = "Root";
+    version = "1.0";
+    url = "mirror://cpan/authors/id/R/RO/ROOT/Root-1.0.tar.gz";
+    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    buildInputs = [  ];
+    propagatedBuildInputs = [  ];
+  };
+}
+NIX
+close $fh;
+
+my $db_file = "$cache_ns/metacpan-cache.db";
+my $cache_file = "$tmpdir/download.jsonl.gz";
+my $mcc = new_ok(
+  "Nix::MetaCPANCache" => [ cache_file => $cache_file, db_file => $db_file ],
+  "Nix::MetaCPANCache"
+);
+
+my $releases = [
+  {
+    name             => "Root-2.0",
+    distribution     => "Root",
+    main_module      => "Root",
+    version          => "2.0",
+    version_numified => 2,
+    checksum_sha256  => "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    download_url     => "https://cpan.metacpan.org/authors/id/R/RO/ROOT/Root-2.0.tar.gz",
+    dependency       => [
+      {
+        module       => "Missing::Dep",
+        relationship => "requires",
+        phase        => "runtime",
+        version      => "0",
+      },
+    ],
+    provides => { "Root" => { file => "lib/Root.pm" } },
+  },
+  {
+    name             => "Missing-Dep-1.0",
+    distribution     => "Missing-Dep",
+    main_module      => "Missing::Dep",
+    version          => "1.0",
+    version_numified => 1,
+    checksum_sha256  => "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    download_url     => "https://cpan.metacpan.org/authors/id/M/MI/MISS/Missing-Dep-1.0.tar.gz",
+    dependency       => [
+      {
+        module       => "Missing::Leaf",
+        relationship => "requires",
+        phase        => "runtime",
+        version      => "0",
+      },
+    ],
+    provides => { "Missing::Dep" => { file => "lib/Missing/Dep.pm" } },
+  },
+  {
+    name             => "Missing-Leaf-1.0",
+    distribution     => "Missing-Leaf",
+    main_module      => "Missing::Leaf",
+    version          => "1.0",
+    version_numified => 1,
+    checksum_sha256  => "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    download_url     => "https://cpan.metacpan.org/authors/id/M/MI/MISS/Missing-Leaf-1.0.tar.gz",
+    dependency       => [],
+    provides => { "Missing::Leaf" => { file => "lib/Missing/Leaf.pm" } },
+  },
+];
+$mcc->write_releases($releases);
+$mcc->write_dependencies();
+
+my $res = run_nix_cpan(
+  $cache_home,
+  {},
+  "generate_missing",
+  "--inplace",
+  "--nix-file",
+  $nix_file,
+  "Root",
+);
+my $out = $res->{out};
+like($out, qr/Appended 2 missing dependency stanzas/,
+     "generate_missing reports appended stanza count");
+
+open my $rfh, "<", $nix_file or die $!;
+local $/ = undef;
+my $new_nix = <$rfh>;
+close $rfh;
+
+like($new_nix, qr/MissingDep\s*=\s*buildPerlPackage/s,
+     "inplace generation appends MissingDep stanza");
+like($new_nix, qr/MissingLeaf\s*=\s*buildPerlPackage/s,
+     "inplace generation appends transitive MissingLeaf stanza");
+unlike($new_nix,
+       qr/MissingLeaf\s*=\s*buildPerlPackage\s*\{[^}]*buildInputs\s*=\s*\[\s*\]\s*;/s,
+       "generated stanzas omit empty buildInputs");
+unlike($new_nix,
+       qr/MissingLeaf\s*=\s*buildPerlPackage\s*\{[^}]*propagatedBuildInputs\s*=\s*\[\s*\]\s*;/s,
+       "generated stanzas omit empty propagatedBuildInputs");
+like($new_nix, qr/\n}\s*\z/s, "nix file still ends with closing brace");
+
+done_testing();

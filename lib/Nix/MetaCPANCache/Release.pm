@@ -15,6 +15,8 @@ class Nix::MetaCPANCache::Release {
   field $main_module :param;
   field $data :param;
   field $_mcc :param;
+  field @deny_attr_prefix = qw(Win32 MSWin32);
+  field @deny_distribution_prefix = qw(Win32- MSWin32-);
 
   ADJUST {
     $data = decode_json($data);
@@ -56,14 +58,34 @@ class Nix::MetaCPANCache::Release {
       @deps = grep { $_->{relationship} eq any($relationships->@*) } @deps;
     }
 
-    my %seen;
-    @deps =
-      sort { $a->name cmp $b->name }
-      map { $_mcc->get_by(main_module =>  $_->{module}) }
-      grep { !$seen{$_->{module}}++ }
-      grep { !Module::CoreList::is_core($_->{module}) }
-      @deps;
-    return [ @deps ];
+    my (%seen_module, %seen_distribution, @resolved);
+    foreach my $dep (@deps) {
+      my $module = $dep->{module};
+      next unless $module;
+      next if $seen_module{$module}++;
+      next if Module::CoreList::is_core($module);
+
+      my $release = $_mcc->resolve_module($module);
+      next unless $release;
+      next if $self->is_denied_dependency_release($release);
+      next if $seen_distribution{ $release->distribution }++;
+      push @resolved, $release;
+    }
+
+    @resolved = sort { $a->name cmp $b->name } @resolved;
+    return [ @resolved ];
+  }
+
+  method is_denied_dependency_release ($release) {
+    my $attr = $release->attrname // q{};
+    my $distribution = $release->distribution // q{};
+    foreach my $prefix (@deny_attr_prefix) {
+      return 1 if index($attr, $prefix) == 0;
+    }
+    foreach my $prefix (@deny_distribution_prefix) {
+      return 1 if index($distribution, $prefix) == 0;
+    }
+    return 0;
   }
 
   method newer_than ($ver) {
