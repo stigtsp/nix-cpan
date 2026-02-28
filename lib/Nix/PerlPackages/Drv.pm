@@ -146,10 +146,16 @@ class Nix::PerlPackages::Drv {
   }
 
   method update_from_metacpan ($mc) {
-    my $version = $mc->version;
-    my $hash    = sha256_hex_to_sri($mc->checksum_sha256);
-    my $url     = $mc->download_url;
+    my $version  = $mc->version;
+    my $checksum = $mc->checksum_sha256;
+    my $url      = $mc->download_url;
 
+    die "update_from_metacpan: missing checksum_sha256 for " . $mc->distribution
+      unless defined $checksum && length $checksum;
+    die "update_from_metacpan: missing download_url for " . $mc->distribution
+      unless defined $url && length $url;
+
+    my $hash = sha256_hex_to_sri($checksum);
     $url =~ s|^https://cpan.metacpan.org/|mirror://cpan/|;
 
     $self->set_attrs(

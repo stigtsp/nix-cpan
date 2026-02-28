@@ -50,7 +50,7 @@ class Nix::MetaCPANCache::Release {
   }
 
   method dependency ($phases=undef, $relationships=["requires"]) {
-    my (@deps) = $data->{dependency}->@*;
+    my (@deps) = ($data->{dependency} // [])->@*;
     if ($phases && $phases->@*) {
       @deps = grep { $_->{phase} eq any($phases->@*) } @deps;
     }

@@ -10,4 +10,9 @@ is_deeply(license_map("perl_5"),
 
 is(render_license("perl_5"), "with lib.licenses; [ artistic1 gpl1Plus ]");
 
+eval { sha256_hex_to_sri("") };
+like($@, qr/requires a non-empty hex string/, "sha256_hex_to_sri dies on empty string");
+eval { sha256_hex_to_sri(undef) };
+like($@, qr/requires a non-empty hex string/, "sha256_hex_to_sri dies on undef");
+
 done_testing();

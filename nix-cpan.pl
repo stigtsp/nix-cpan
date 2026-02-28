@@ -249,8 +249,12 @@ sub render_generated_drv ($app, $release) {
   my $attr = $release->attrname;
   my $distribution = $release->distribution;
   my $version = $release->version;
-  my $url = $release->download_url // q{};
-  my $checksum = $release->checksum_sha256 // q{};
+  my $url = $release->download_url;
+  die "render_generated_drv: missing download_url for " . $release->distribution
+    unless defined $url && length $url;
+  my $checksum = $release->checksum_sha256;
+  die "render_generated_drv: missing checksum_sha256 for " . $release->distribution
+    unless defined $checksum && length $checksum;
   my $hash = sha256_hex_to_sri($checksum);
 
   $url =~ s|^https://cpan.metacpan.org/|mirror://cpan/|;

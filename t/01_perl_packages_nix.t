@@ -92,6 +92,17 @@ is_deeply( [ $moose->propagated_build_inputs() ],
   sub propagated_build_inputs { return () }
 }
 
+{
+  package Test::FakeReleaseUndefFields;
+  sub new { bless {}, shift }
+  sub distribution { return "Fake-Undef" }
+  sub version { return "0.01" }
+  sub checksum_sha256 { return undef }
+  sub download_url { return undef }
+  sub build_inputs { return () }
+  sub propagated_build_inputs { return () }
+}
+
 $moose->update_from_metacpan(Test::FakeRelease->new());
 
 is($moose->version, "9.99", "update_from_metacpan sets version");
@@ -105,6 +116,25 @@ is_deeply([$moose->build_inputs], [qw/Alpha Zeta/],
           "update_from_metacpan sets buildInputs from MetaCPAN");
 is_deeply([$moose->propagated_build_inputs], [qw/Beta Gamma/],
           "update_from_metacpan sets propagatedBuildInputs from MetaCPAN");
+
+{
+  my $undef_drv = Nix::PerlPackages::Drv->new(
+    prepart   => "  UndefFields = buildPerlPackage ",
+    attrname  => "UndefFields",
+    build_fun => "Package",
+    part      => <<'NIX'
+{
+    name = "Undef-Fields";
+    version = "0.00";
+    url = "mirror://cpan/authors/id/U/UN/UNDEF/Undef-Fields-0.00.tar.gz";
+    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+  }
+NIX
+  );
+  eval { $undef_drv->update_from_metacpan(Test::FakeReleaseUndefFields->new()) };
+  like($@, qr/missing checksum_sha256/,
+       "update_from_metacpan dies on undef checksum");
+}
 
 $moose->set_build_inputs(qw/pkgs.openssl OldPerlDep/);
 $moose->set_propagated_build_inputs(qw/pkgs.zlib AnotherOldDep/);

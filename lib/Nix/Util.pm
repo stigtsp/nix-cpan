@@ -11,6 +11,7 @@ use Log::Log4perl qw(:easy);
 our @EXPORT_OK = qw(sha256_hex_to_sri distro_name_to_attr license_map render_license attr_is_reserved);
 
 sub sha256_hex_to_sri ($hex) {
+    die "sha256_hex_to_sri: requires a non-empty hex string" unless defined $hex && length $hex;
     my $num = Math::BigInt->new("0x$hex")->to_bytes();
     return "sha256-" . encode_base64( $num, "" );
 }
