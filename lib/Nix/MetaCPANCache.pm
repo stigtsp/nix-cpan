@@ -4,16 +4,21 @@ use experimental qw(class);
 
 class Nix::MetaCPANCache {
   use Nix::MetaCPANCache::Release;
+  use Nix::PerlPackages::Errata qw(errata);
   use DBI;
   use MetaCPAN::Client;
+  use HTTP::Tiny;
   use Cpanel::JSON::XS qw(encode_json decode_json);
   use IO::Zlib qw(:gzip_external 1);
+  use IO::Uncompress::Gunzip qw(gunzip $GunzipError);
   use Log::Log4perl qw(:easy);
   use Smart::Comments;
+  use File::Basename qw(basename);
   use File::XDG;
 
   field $cache_file :param = undef;
   field $db_file    :param = undef;
+  field $cpan_02packages_file :param = undef;
 
   field $transaction_size :param = 2000;
 
@@ -31,6 +36,7 @@ class Nix::MetaCPANCache {
 
     $db_file    //= $makeCache->("metacpan-cache.db");
     $cache_file //= $makeCache->("metacpan-download-cache.jsonl.gz");
+    $cpan_02packages_file //= $makeCache->("cpan-02packages.details.txt.gz");
 
     ERROR("Missing $db_file, run update()") unless -f $db_file;
   };
@@ -49,16 +55,54 @@ class Nix::MetaCPANCache {
   }
 
   method resolve_module ($module) {
-    my $release = $self->get_by(main_module => $module);
-    return $release if $release;
+    my $cfg = errata();
+    my $override_map =
+      ($cfg && ref($cfg) eq "HASH" && ref($cfg->{moduleResolutionOverrides}) eq "HASH")
+      ? $cfg->{moduleResolutionOverrides}
+      : {};
 
-    my ($distribution) = $self->dbh->selectrow_array(
-      "SELECT distribution FROM provide WHERE module=?",
-      undef,
-      $module
-    );
-    return unless $distribution;
-    return $self->get_by(distribution => $distribution);
+    my @candidates = ($module);
+    my $parent = $module;
+    while ($parent =~ s/::[^:]+$//) {
+      push @candidates, $parent;
+    }
+
+    foreach my $cand (@candidates) {
+      if (my $override = $override_map->{$cand}) {
+        state %warned_override;
+        my $key = $cand . "=>" . $override;
+        WARN("Errata moduleResolutionOverrides applied: $cand => $override")
+          unless $warned_override{$key}++;
+        my $release = $self->get_by(distribution => $override);
+        return $release if $release;
+        $release = $self->get_by(main_module => $override);
+        return $release if $release;
+      }
+
+      my $release = $self->get_by(main_module => $cand);
+      return $release if $release;
+
+      my ($distribution) = $self->dbh->selectrow_array(
+        "SELECT distribution FROM provide WHERE module=?",
+        undef,
+        $cand
+      );
+      if ($distribution) {
+        $release = $self->get_by(distribution => $distribution);
+        return $release if $release;
+      }
+
+      # Fallback for incomplete provide indexes: derive distribution guess from
+      # module name (e.g. Types::Serialiser -> Types-Serialiser).
+      if ($cand =~ /::/) {
+        my $dist_guess = $cand;
+        $dist_guess =~ s/::/-/g;
+        $release = $self->get_by(distribution => $dist_guess);
+        return $release if $release;
+      }
+    }
+
+    return;
   }
 
 
@@ -79,6 +123,10 @@ class Nix::MetaCPANCache {
     if (-f $cache_file) {
       INFO("Removing download cache: $cache_file");
       unlink($cache_file);
+    }
+    if (-f $cpan_02packages_file) {
+      INFO("Removing CPAN 02packages cache: $cpan_02packages_file");
+      unlink($cpan_02packages_file);
     }
   }
 
@@ -116,8 +164,11 @@ class Nix::MetaCPANCache {
     my $mc = MetaCPAN::Client->new();
 
     my $release_results = $mc->release({
-      all => [ { status     => 'latest' },
-               { authorized => 'true'   } ]
+      # Use latest releases without filtering by "authorized".
+      # Some valid distributions/modules (e.g. URI in certain snapshots)
+      # may be absent when this filter is applied, which leaves dependency
+      # modules unresolved in the local cache.
+      all => [ { status => 'latest' } ]
     });
     my @releases;
     my $total = $release_results->total;
@@ -141,7 +192,82 @@ class Nix::MetaCPANCache {
       $self->unlink_db_file();
     }
     $self->write_releases($releases);
+    $self->enrich_provide_from_02packages();
     $self->write_dependencies();
+  }
+
+  method cached_download_02packages_file {
+    if (-f $cpan_02packages_file) {
+      INFO("Using cached CPAN 02packages index from $cpan_02packages_file");
+      return $cpan_02packages_file;
+    }
+
+    my $url = "https://cpan.metacpan.org/modules/02packages.details.txt.gz";
+    INFO("Downloading CPAN 02packages index from $url");
+    my $http = HTTP::Tiny->new(timeout => 60);
+    my $res = $http->get($url);
+    die "Failed downloading $url: $res->{status} $res->{reason}"
+      unless $res->{success};
+
+    open my $fh, ">", $cpan_02packages_file
+      or die "Cannot write $cpan_02packages_file: $!";
+    binmode($fh);
+    print {$fh} $res->{content};
+    close $fh;
+
+    return $cpan_02packages_file;
+  }
+
+  method enrich_provide_from_02packages {
+    my $gz_file = $self->cached_download_02packages_file();
+
+    INFO("Indexing module->distribution mappings from CPAN 02packages");
+    my %archive_to_distribution;
+    $self->each_release(
+      sub ($r) {
+        my $archive = $r->{archive};
+        return unless defined $archive && length $archive;
+        my $distribution = $r->{distribution};
+        return unless defined $distribution && length $distribution;
+        $archive_to_distribution{$archive} //= $distribution;
+      }
+    );
+
+    my $dbh = $self->dbh;
+    $dbh->begin_work;
+    my $ins_sth = $dbh->prepare(
+      "INSERT OR IGNORE INTO provide (module, distribution) VALUES (?,?)"
+    );
+
+    open my $fh, "<", $gz_file or die "Cannot open $gz_file: $!";
+    binmode($fh);
+    my $content = q{};
+    gunzip($fh => \$content) or die "gunzip $gz_file failed: $GunzipError";
+    close $fh;
+
+    my $in_body = 0;
+    my $inserted = 0;
+    my $unresolved = 0;
+    foreach my $line (split /\n/, $content) {
+      if (!$in_body) {
+        $in_body = 1 if $line =~ /^\s*$/;
+        next;
+      }
+      next unless $line =~ /\S/;
+      my ($module, $version, $path) = split /\s+/, $line, 3;
+      next unless defined $module && defined $path;
+      my $archive = basename($path);
+      my $distribution = $archive_to_distribution{$archive};
+      unless ($distribution) {
+        $unresolved++;
+        next;
+      }
+      $ins_sth->execute($module, $distribution);
+      $inserted++;
+    }
+    $dbh->commit;
+
+    INFO("CPAN 02packages enrichment complete: inserted/attempted=$inserted unresolved=$unresolved");
   }
 
   method write_releases ($releases) {
@@ -183,9 +309,15 @@ class Nix::MetaCPANCache {
       if ($r->{main_module}) {
         $mods{$r->{main_module}} = 1;
       }
-      if ($r->{provides} && ref($r->{provides}) eq "HASH") {
-        foreach my $module (keys $r->{provides}->%*) {
-          $mods{$module} = 1 if $module;
+      if ($r->{provides}) {
+        if (ref($r->{provides}) eq "HASH") {
+          foreach my $module (keys $r->{provides}->%*) {
+            $mods{$module} = 1 if $module;
+          }
+        } elsif (ref($r->{provides}) eq "ARRAY") {
+          foreach my $module ($r->{provides}->@*) {
+            $mods{$module} = 1 if defined $module && length $module;
+          }
         }
       }
       foreach my $module (keys %mods) {

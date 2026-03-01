@@ -1,6 +1,7 @@
 use v5.38;
 use Test::More;
 use Data::Dumper;
+use File::Temp qw(tempdir);
 
 use_ok("Nix::PerlPackages");
 use_ok("Nix::PerlPackages::Drv");
@@ -55,6 +56,9 @@ $moose->set_build_inputs( qw/DevelGlobalDestruction DevelOverloadInfo ClassLoadX
 is_deeply( [ $moose->build_inputs() ],
            [ qw/ClassLoadXS DevelGlobalDestruction DevelOverloadInfo/ ],
            "Could set new build inputs for Moose" );
+like($moose->part,
+     qr/^\s{4}buildInputs\s*=\s*\[\s*ClassLoadXS DevelGlobalDestruction DevelOverloadInfo\s*\];/m,
+     "set_build_inputs preserves attribute indentation");
 
 $moose->set_propagated_build_inputs( qw/Moo/ );
 
@@ -213,5 +217,50 @@ unlike($no_deps_drv->part, qr/buildInputs\s*=\s*\[\s*\]\s*;/s,
 unlike($no_deps_drv->part, qr/propagatedBuildInputs\s*=\s*\[\s*\]\s*;/s,
        "update_from_metacpan does not add empty propagatedBuildInputs");
 
+{
+  my $named_drv = Nix::PerlPackages::Drv->new(
+    prepart   => "  Named = buildPerlPackage ",
+    attrname  => "Named",
+    build_fun => "Package",
+    part      => <<'NIX'
+{
+    pname = "docmake";
+    name = "App-XML-DocBook-Builder";
+    version = "1.0";
+    url = "mirror://cpan/authors/id/X/XY/XYZ/App-XML-DocBook-Builder-1.0.tar.gz";
+    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+  }
+NIX
+  );
+  is($named_drv->name, "App-XML-DocBook-Builder",
+     "get_attr(name) does not match pname by substring");
+}
+
+{
+  my $tmpdir = tempdir(CLEANUP => 1);
+  my $nix_file = "$tmpdir/perl-packages-mini.nix";
+  open my $fh, ">", $nix_file or die $!;
+  print {$fh} <<'NIX';
+{
+  Foo = buildPerlPackage {
+    name = "Foo";
+    version = "1.0";
+    url = "mirror://cpan/authors/id/F/FO/FOO/Foo-1.0.tar.gz";
+    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    postPatch = ''
+      echo 'qr/CHI stats: {' 'qr/CHI stats: \{'
+    '';
+  };
+
+  AliasAfterBraces = self.Foo;
+}
+NIX
+  close $fh;
+
+  my $mini = Nix::PerlPackages->new(nix_file => $nix_file);
+  my %attr = map { $_ => 1 } $mini->all_attrnames;
+  ok($attr{AliasAfterBraces},
+     "all_attrnames captures aliases after unmatched braces in strings");
+}
 
 done_testing();

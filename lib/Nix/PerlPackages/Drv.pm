@@ -43,23 +43,27 @@ class Nix::PerlPackages::Drv {
     unless (defined $old_val) {
         die "$attr wasn't defined previously";
     }
-    $part =~ s/($attr\s*=\s*)"\Q$old_val\E";/$1"$val";/g;
+    $part =~ s{(^\s*\Q$attr\E\s*=\s*)"\Q$old_val\E";}{$1"$val";}m
+      or die "Unable to update $attr";
   }
 
   method get_attr ($attr, $str=$part) {
-    my $cnt = $str =~ m/$attr\s*=\s*$RE{quoted}{-keep};/;
-    my $val = $1;
-    return unless defined $val;
-    die "get_attr $attr found more than 1 in part: $part" if $cnt>1;
-    $val =~ s/^(['"])(.*)\1/$2/;
-    return $val;
+    my @vals;
+    foreach my $line (split /\n/, $str, -1) {
+      if ($line =~ /^\s*\Q$attr\E\s*=\s*(["'])(.*)\1;\s*$/) {
+        push @vals, $2;
+      }
+    }
+    return undef unless @vals;
+    die "get_attr $attr found more than 1 in part: $part" if @vals > 1;
+    return $vals[0];
   }
 
   method get_attr_list ($attr, $str=$part) {
     ### get_attr_list text: $text
-    my ($val) = $str =~ m/ $attr\s*=\s*
+    my ($val) = $str =~ m/^\s*\Q$attr\E\s*=\s*
                            $RE{balanced}{-parens=>'[]'};
-                         /gx;
+                         /gmx;
 
     return unless $val;
 
@@ -72,15 +76,15 @@ class Nix::PerlPackages::Drv {
   method set_attr_list ($attr, @vals) {
     # my @has = $self->get_attr_list($attr, $str);
     my $attr_str = "[ ". join(" ", sort @vals)." ]";
-    $part=~s/$attr\s*=\s*$RE{balanced}{-parens=>'[]'}/$attr = $attr_str/;
+    $part=~s/^(\s*)\Q$attr\E\s*=\s*$RE{balanced}{-parens=>'[]'}/$1$attr = $attr_str/m;
   }
 
   method has_attr_assignment($attr, $str=$part) {
-    return $str =~ /$attr\s*=/ ? 1 : 0;
+    return $str =~ /^\s*\Q$attr\E\s*=/m ? 1 : 0;
   }
 
   method attr_list_is_simple($attr, $str=$part) {
-    my ($expr) = $str =~ m/$attr\s*=\s*(.*?);/s;
+    my ($expr) = $str =~ m/^\s*\Q$attr\E\s*=\s*(.*?);/ms;
     return 0 unless defined $expr;
     return $expr =~ /^\s*\[[^\]]*\]\s*$/s ? 1 : 0;
   }
@@ -110,11 +114,36 @@ class Nix::PerlPackages::Drv {
   }
 
   method version {
-    return $self->get_attr("version");
+    return $self->_get_top_level_attr("version");
   }
 
   method name {
-    return $self->get_attr("name");
+    return $self->_get_top_level_attr("name");
+  }
+
+  method pname {
+    return $self->_get_top_level_attr("pname");
+  }
+
+  method get_top_level_attr($attr) {
+    return $self->_get_top_level_attr($attr);
+  }
+
+  method distribution_name {
+    my $pname = $self->pname;
+    return $pname if defined $pname && length $pname;
+
+    my $name = $self->name;
+    return unless defined $name && length $name;
+
+    my $version = $self->version;
+    if (defined $version && length $version) {
+      my $suffix = "-" . $version;
+      if (substr($name, -length($suffix)) eq $suffix) {
+        return substr($name, 0, length($name) - length($suffix));
+      }
+    }
+    return $name;
   }
 
   method set_build_inputs (@attrs) {
@@ -141,6 +170,30 @@ class Nix::PerlPackages::Drv {
     return $attrname;
   }
 
+  method prepart {
+    return $prepart;
+  }
+
+  method build_fun {
+    return $build_fun;
+  }
+
+  method build_fun_changed {
+    return $build_fun ne $orig_build_fun ? 1 : 0;
+  }
+
+  method set_build_fun($new_build_fun) {
+    return unless defined $new_build_fun;
+    return unless $new_build_fun eq any(qw(Package Module));
+    $build_fun = $new_build_fun;
+  }
+
+  method prepart_for_current_build_fun {
+    my $new = $prepart;
+    $new =~ s/buildPerl(?:Package|Module)/buildPerl$build_fun/;
+    return $new;
+  }
+
   method part {
     return $part;
   }
@@ -158,12 +211,29 @@ class Nix::PerlPackages::Drv {
     my $hash = sha256_hex_to_sri($checksum);
     $url =~ s|^https://cpan.metacpan.org/|mirror://cpan/|;
 
-    $self->set_attrs(
-      version => $version,
-      url     => $url,
-      hash    => $hash,
-    );
+    if ($mc->can("preferred_build_fun")) {
+      my $preferred = $mc->preferred_build_fun;
+      $self->set_build_fun($preferred) if defined $preferred;
+    }
 
+    $self->_set_attr_prefer_top_level("version", $version);
+    $self->_set_attr_prefer_top_level("url", $url);
+    $self->_set_attr_prefer_top_level("hash", $hash);
+
+    my @build_inputs = $mc->build_inputs();
+    my @existing_build_inputs = $self->build_inputs();
+    push @build_inputs,
+      grep { /^pkgs\./ } @existing_build_inputs;
+    $self->set_or_add_attr_list("buildInputs", @build_inputs);
+
+    my @propagated_build_inputs = $mc->propagated_build_inputs();
+    my @existing_propagated_build_inputs = $self->propagated_build_inputs();
+    push @propagated_build_inputs,
+      grep { /^pkgs\./ } @existing_propagated_build_inputs;
+    $self->set_or_add_attr_list("propagatedBuildInputs", @propagated_build_inputs);
+  }
+
+  method update_deps_from_metacpan ($mc) {
     my @build_inputs = $mc->build_inputs();
     my @existing_build_inputs = $self->build_inputs();
     push @build_inputs,
@@ -184,6 +254,212 @@ class Nix::PerlPackages::Drv {
       return "perlPackages." . $self->attrname . ": $prev_ver -> $new_ver";
     }
     return;
+  }
+
+  method _top_level_target_depth($str) {
+    my @lines = split /\n/, $str, -1;
+    my %state = (
+      in_block_comment => 0,
+      in_dquote        => 0,
+      in_squote        => 0,
+    );
+    my $depth = 0;
+    foreach my $line (@lines) {
+      my $masked = $self->_mask_nix_line($line, \%state);
+      next if $masked =~ /^\s*$/;
+      my $depth_before = $depth;
+      if ($masked =~ /^\s*\{\s*$/) {
+        return $depth_before + 1;
+      }
+      return $depth_before;
+    }
+    return 0;
+  }
+
+  method _set_attr_prefer_top_level($attr, $val) {
+    my $top = $self->_get_top_level_attr($attr);
+    if (defined $top) {
+      return $self->_set_top_level_attr($attr, $top, $val);
+    }
+    return $self->set_attr($attr, $val);
+  }
+
+  method _set_top_level_attr($attr, $old_val, $val) {
+    my @lines = split /\n/, $part, -1;
+    my %state = (
+      in_block_comment => 0,
+      in_dquote        => 0,
+      in_squote        => 0,
+    );
+    my $depth = 0;
+    my $target_depth = $self->_top_level_target_depth($part);
+    my $target_indent = $self->_top_level_target_indent($part, $target_depth);
+    $target_indent //= q{};
+    my $updated = 0;
+
+    for (my $i = 0; $i < @lines; $i++) {
+      my $line = $lines[$i];
+      my $masked = $self->_mask_nix_line($line, \%state);
+      my $depth_before = $depth;
+
+      if (!$updated && $depth_before == $target_depth) {
+        if ($line =~ /^(\Q$target_indent\E\Q$attr\E\s*=\s*)(["'])(.*)\2;(\s*)$/) {
+          my $line_old_val = $3;
+          if (defined $line_old_val && $line_old_val eq $old_val) {
+            $lines[$i] = $1 . "\"$val\";" . $4;
+            $updated = 1;
+          }
+        }
+      }
+      $depth += $self->_brace_delta($masked);
+    }
+
+    die "Unable to update top-level $attr" unless $updated;
+    $part = join("\n", @lines);
+  }
+
+  method _get_top_level_attr($attr, $str=$part) {
+    my @vals;
+    my @lines = split /\n/, $str, -1;
+    my %state = (
+      in_block_comment => 0,
+      in_dquote        => 0,
+      in_squote        => 0,
+    );
+    my $depth = 0;
+    my $target_depth = $self->_top_level_target_depth($str);
+    my $target_indent = $self->_top_level_target_indent($str, $target_depth);
+    $target_indent //= q{};
+
+    foreach my $line (@lines) {
+      my $masked = $self->_mask_nix_line($line, \%state);
+      my $depth_before = $depth;
+
+      if ($depth_before == $target_depth &&
+          $line =~ /^\Q$target_indent\E\Q$attr\E\s*=\s*(["'])(.*)\1;\s*$/) {
+        push @vals, $2;
+      }
+
+      $depth += $self->_brace_delta($masked);
+    }
+    return undef unless @vals;
+    die "_get_top_level_attr $attr found more than 1 in part: $part" if @vals > 1;
+    return $vals[0];
+  }
+
+  method _top_level_target_indent($str, $target_depth=undef) {
+    $target_depth //= $self->_top_level_target_depth($str);
+    my @lines = split /\n/, $str, -1;
+    my %state = (
+      in_block_comment => 0,
+      in_dquote        => 0,
+      in_squote        => 0,
+    );
+    my $depth = 0;
+
+    foreach my $line (@lines) {
+      my $masked = $self->_mask_nix_line($line, \%state);
+      my $depth_before = $depth;
+      if ($depth_before == $target_depth &&
+          $masked =~ /^(\s+)[\w.-]+\s*=/) {
+        return $1;
+      }
+      $depth += $self->_brace_delta($masked);
+    }
+    return undef;
+  }
+
+  method _brace_delta($line) {
+    my $open_cnt = () = ($line =~ /\{/g);
+    my $close_cnt = () = ($line =~ /\}/g);
+    return $open_cnt - $close_cnt;
+  }
+
+  method _mask_nix_line($line, $st) {
+    my $out = "";
+    my $i = 0;
+    my $len = length($line);
+
+    while ($i < $len) {
+      my $c = substr($line, $i, 1);
+      my $two = ($i + 1 < $len) ? substr($line, $i, 2) : "";
+
+      if ($st->{in_block_comment}) {
+        if ($two eq "*/") {
+          $out .= "  ";
+          $i += 2;
+          $st->{in_block_comment} = 0;
+        } else {
+          $out .= " ";
+          $i++;
+        }
+        next;
+      }
+
+      if ($st->{in_dquote}) {
+        if ($c eq "\\" && $i + 1 < $len) {
+          $out .= "  ";
+          $i += 2;
+        } elsif ($c eq "\"") {
+          $out .= " ";
+          $i++;
+          $st->{in_dquote} = 0;
+        } else {
+          $out .= " ";
+          $i++;
+        }
+        next;
+      }
+
+      if ($st->{in_squote}) {
+        if ($two eq "''") {
+          my $next = ($i + 2 < $len) ? substr($line, $i + 2, 1) : "";
+          if ($next eq '$' || $next eq "'") {
+            $out .= "  ";
+            $i += 2;
+          } else {
+            $out .= "  ";
+            $i += 2;
+            $st->{in_squote} = 0;
+          }
+        } else {
+          $out .= " ";
+          $i++;
+        }
+        next;
+      }
+
+      if ($two eq "/*") {
+        $out .= "  ";
+        $i += 2;
+        $st->{in_block_comment} = 1;
+        next;
+      }
+
+      if ($two eq "''") {
+        $out .= "  ";
+        $i += 2;
+        $st->{in_squote} = 1;
+        next;
+      }
+
+      if ($c eq "\"") {
+        $out .= " ";
+        $i++;
+        $st->{in_dquote} = 1;
+        next;
+      }
+
+      if ($c eq "#") {
+        $out .= " " x ($len - $i);
+        last;
+      }
+
+      $out .= $c;
+      $i++;
+    }
+
+    return $out;
   }
 
 

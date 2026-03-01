@@ -62,6 +62,9 @@ my $releases = [
     version_numified => 1,
     checksum_sha256  => "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     download_url     => "https://cpan.metacpan.org/authors/id/M/MI/MISS/Missing-Dep-1.0.tar.gz",
+    abstract         => "a useful dependency.",
+    resources        => { homepage => "https://metacpan.org/release/Missing-Dep" },
+    license          => [ "perl_5" ],
     dependency       => [],
     provides         => { "Missing::Dep" => { file => "lib/Missing/Dep.pm" } },
   },
@@ -91,6 +94,16 @@ like($new_nix, qr/Root = buildPerlPackage.*?version = "2\.0";/s,
      "update changed existing package version");
 like($new_nix, qr/MissingDep\s*=\s*buildPerlPackage/s,
      "update --missing appended missing dependency stanza");
+like($new_nix, qr/MissingDep\s*=\s*buildPerlPackage.*?pname = "Missing-Dep";.*?version = "1\.0";/s,
+     "generated missing stanza uses pname/version instead of legacy name");
+like($new_nix, qr/MissingDep\s*=\s*buildPerlPackage.*?meta\s*=\s*\{/s,
+     "generated missing stanza includes meta block");
+like($new_nix, qr/MissingDep\s*=\s*buildPerlPackage.*?description = "a useful dependency";/s,
+     "generated missing stanza includes normalized description");
+like($new_nix, qr/MissingDep\s*=\s*buildPerlPackage.*?homepage = "https:\/\/metacpan\.org\/release\/Missing-Dep";/s,
+     "generated missing stanza includes homepage");
+like($new_nix, qr/MissingDep\s*=\s*buildPerlPackage.*?license = with lib\.licenses; \[ artistic1 gpl1Plus \];/s,
+     "generated missing stanza includes mapped license");
 like($new_nix, qr/\n}\s*\z/s, "nix file still ends with closing brace");
 
 done_testing();

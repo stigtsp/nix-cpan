@@ -15,7 +15,7 @@ use lib qw(lib);
 use Cpanel::JSON::XS qw(encode_json);
 use Nix::PerlPackages;
 use Nix::MetaCPANCache;
-use Nix::Util qw(sha256_hex_to_sri);
+use Nix::Util qw(sha256_hex_to_sri render_license);
 use Text::Diff ();
 use IPC::Cmd qw(run);
 
@@ -44,6 +44,7 @@ subcommand update => "Update one or more perlPackage derivations" => sub {
   option bool => "commit"  => "Commit changes" => 0;
   option bool => "diff"    => "Print unified diff for updated derivations" => 0;
   option bool => "missing" => "Also add missing dependency stanzas for updated attrs" => 0;
+  option bool => "deps_only" => "Only refresh dependency lists; do not bump version/url/hash" => 0;
 };
 
 subcommand generate_missing => "Generate missing dependency stanzas for update candidates" => sub {
@@ -81,6 +82,7 @@ sub command_compare ($app, @args) {
 
   my $pp = Nix::PerlPackages->new( nix_file => $app->nix_file );
   my %existing_attrs = map { $_ => 1 } $pp->all_attrnames;
+  my %existing_attrs_lc = map { lc($_) => 1 } keys %existing_attrs;
 
   my @drvs = $pp->drvs;
   if (@args) {
@@ -89,7 +91,7 @@ sub command_compare ($app, @args) {
   my @updates;
   my %missing;
   foreach my $drv (@drvs) {
-    my $name = $drv->name;
+    my $name = $drv->distribution_name;
     unless ($drv->version) {
       WARN("$name has no version");
       next;
@@ -132,6 +134,7 @@ sub command_compare ($app, @args) {
       ) {
         my $dep_attr = $dep->attrname;
         next if $existing_attrs{$dep_attr};
+        next if $existing_attrs_lc{lc($dep_attr)};
         my $h = $missing{$dep_attr} //= {
           distribution => $dep->distribution,
           required_by  => {},
@@ -204,8 +207,25 @@ sub print_missing_report ($app, $missing) {
   }
 }
 
+sub scan_top_level_attrnames ($app) {
+  my %attr;
+  open my $fh, "<", $app->nix_file or die "Cannot read ".$app->nix_file.": $!";
+  while (my $l = <$fh>) {
+    if ($l =~ /^  ([\w-]+)\s*=/) {
+      $attr{$1} = 1;
+    }
+  }
+  close $fh;
+  return %attr;
+}
+
 sub collect_missing_dependencies ($app, $metacpan, $pp, @attrs) {
   my %existing = map { $_ => 1 } $pp->all_attrnames;
+  my %scanned = $app->scan_top_level_attrnames;
+  @existing{keys %scanned} = values %scanned;
+  # Also index by lowercase to catch case-insensitive duplicates
+  # e.g. LWPProtocolHttps (canonical) vs LWPProtocolhttps (from distro_name_to_attr)
+  my %existing_lc = map { lc($_) => 1 } keys %existing;
   my %seen_distribution;
   my %missing;
   my @queue;
@@ -216,9 +236,16 @@ sub collect_missing_dependencies ($app, $metacpan, $pp, @attrs) {
   }
 
   foreach my $drv (@drvs) {
-    my $mc = $metacpan->get_by(distribution => $drv->name);
+    my $name = $drv->distribution_name;
+    next unless defined $name && length $name;
+
+    my $mc = $metacpan->get_by(distribution => $name);
     next unless $mc;
-    next unless $drv->version && $mc->newer_than($drv->version);
+    unless ($app->deps_only_enabled) {
+      my $version = $drv->version;
+      next unless defined $version && length $version;
+      next unless $mc->newer_than($version);
+    }
     push @queue, [ $drv->attrname, $mc ];
   }
 
@@ -230,6 +257,7 @@ sub collect_missing_dependencies ($app, $metacpan, $pp, @attrs) {
     ) {
       my $dep_attr = $dep->attrname;
       next if $existing{$dep_attr};
+      next if $existing_lc{lc($dep_attr)};
 
       my $h = $missing{$dep_attr} //= {
         release     => $dep,
@@ -261,17 +289,57 @@ sub render_generated_drv ($app, $release) {
 
   my @build = sort map { $_->attrname } $release->dependency([qw(build test configure)])->@*;
   my @propagated = sort map { $_->attrname } $release->dependency([qw(runtime)])->@*;
+  my $preferred_build_fun = $release->preferred_build_fun // "Package";
+  my $build_fun = $preferred_build_fun eq "Module" ? "buildPerlModule" : "buildPerlPackage";
+  my $homepage = $release->homepage;
+  my $description = $release->abstract;
+  my $license = render_license($release->license);
+
+  if (defined $description) {
+    $description =~ s/\n+/ /g;
+    $description =~ s/\s+/ /g;
+    $description =~ s/^\s+|\s+$//g;
+    $description =~ s/\.$//;
+  }
+  if (defined $homepage) {
+    $homepage =~ s/^\s+|\s+$//g;
+  }
+  my $esc = sub ($s) {
+    return undef unless defined $s;
+    $s =~ s/\\/\\\\/g;
+    $s =~ s/"/\\"/g;
+    return $s;
+  };
+  $description = $esc->($description);
+  $homepage = $esc->($homepage);
 
   my $build_line = @build ? '    buildInputs = [ '.join(q{ }, @build)." ];\n" : q{};
   my $propagated_line = @propagated ? '    propagatedBuildInputs = [ '.join(q{ }, @propagated)." ];\n" : q{};
+  my $meta_block = q{};
+  if ((defined $description && length $description) ||
+      (defined $homepage && length $homepage) ||
+      (defined $license && length $license)) {
+    $meta_block .= "    meta = {\n";
+    $meta_block .= "      description = \"$description\";\n"
+      if defined $description && length $description;
+    $meta_block .= "      homepage = \"$homepage\";\n"
+      if defined $homepage && length $homepage;
+    $meta_block .= "      license = $license;\n"
+      if defined $license && length $license;
+    $meta_block .= "    };\n";
+  }
 
   my $ret = '';
-  $ret .= "  $attr = buildPerlPackage {\n";
-  $ret .= "    name = \"$distribution-$version\";\n";
-  $ret .= "    url = \"$url\";\n";
-  $ret .= "    hash = \"$hash\";\n";
+  $ret .= "  $attr = $build_fun {\n";
+  $ret .= "    pname = \"$distribution\";\n";
+  $ret .= "    version = \"$version\";\n";
+  $ret .= "    src = fetchurl {\n";
+  $ret .= "      url = \"$url\";\n";
+  $ret .= "      hash = \"$hash\";\n";
+  $ret .= "    };\n";
   $ret .= $build_line;
   $ret .= $propagated_line;
+  $ret .= $meta_block;
   $ret .= "  };\n";
   return $ret;
 }
@@ -293,6 +361,59 @@ sub append_generated_stanzas_inplace ($app, $text) {
   open my $wh, ">", $file or die "Cannot write $file: $!";
   print {$wh} $buf;
   close $wh;
+}
+
+sub has_nixfmt ($app) {
+  state $checked = 0;
+  state $has = 0;
+  state $msg = "";
+  if (!$checked) {
+    my ($ok, $err, $buf) = run(command => ["nixfmt", "--version"]);
+    $has = $ok ? 1 : 0;
+    $msg = join("", ($buf // [])->@*);
+    $msg = $err unless $msg;
+    $checked = 1;
+  }
+  die "nixfmt is required but was not found or failed to run: $msg"
+    unless $has;
+  return $has;
+}
+
+sub nix_file_sig ($app) {
+  my @s = stat($app->nix_file);
+  return unless @s;
+  return join(":", $s[1], $s[7], $s[9]);
+}
+
+sub format_nix_file ($app, $pp=undef) {
+  $app->has_nixfmt;
+  state %last_formatted_sig_by_file;
+  my $file = $app->nix_file;
+  return $app->format_path_with_nixfmt($file, $pp, \%last_formatted_sig_by_file);
+}
+
+sub format_path_with_nixfmt ($app, $file, $pp=undef, $cache=undef) {
+  $app->has_nixfmt;
+  $cache //= {};
+  my $sig_before = $app->nix_file_sig;
+  if (defined $file && -f $file) {
+    my @s = stat($file);
+    $sig_before = @s ? join(":", $s[1], $s[7], $s[9]) : undef;
+  }
+  if (defined $sig_before &&
+      defined $cache->{$file} &&
+      $cache->{$file} eq $sig_before) {
+    return;
+  }
+  my ($ok, $err, $buf) = run(command => ["nixfmt", $file]);
+  die "nixfmt failed: $err: ".join("", ($buf // [])->@*) unless $ok;
+  my $sig_after = undef;
+  if (defined $file && -f $file) {
+    my @s = stat($file);
+    $sig_after = @s ? join(":", $s[1], $s[7], $s[9]) : undef;
+  }
+  $cache->{$file} = $sig_after if defined $sig_after;
+  $pp->parse_nix_file if $pp;
 }
 
 sub missing_commit_body ($app, $missing_to_add, @missing_attrs) {
@@ -349,11 +470,13 @@ sub command_generate_missing ($app, @attrs) {
 
   if ($app->inplace) {
     $app->append_generated_stanzas_inplace($text);
+    $app->format_nix_file();
     say "Appended ".scalar(@attrs_sorted)." missing dependency stanzas to ".$app->nix_file;
   } else {
     open my $fh, ">", $app->out or die "Cannot write ".$app->out.": $!";
     print {$fh} $text;
     close $fh;
+    $app->format_path_with_nixfmt($app->out);
     say "Generated ".scalar(@attrs_sorted)." missing dependency stanzas into ".$app->out;
   }
 }
@@ -368,6 +491,9 @@ sub command_update ($app, @attrs) {
   }
 
   my $pp = Nix::PerlPackages->new( nix_file => $app->nix_file );
+  my %known_attrs = map { $_ => 1 } $pp->all_attrnames;
+  my %scanned_attrs = $app->scan_top_level_attrnames;
+  @known_attrs{keys %scanned_attrs} = values %scanned_attrs;
 
   unless (@attrs) {
     @attrs = map { $_->attrname } $pp->drvs;
@@ -384,6 +510,7 @@ sub command_update ($app, @attrs) {
     try {
       my $d = $app->update_attr($metacpan, $pp, $a);
       if ($d && $d->dirty) {
+        $app->validate_drv_dependency_attrs($d, \%known_attrs, $missing_to_add);
         push @updated, $d;
       } else {
         push @ok, [$a];
@@ -429,7 +556,7 @@ sub command_update ($app, @attrs) {
     }
 
     if ($app->inplace || $app->commit) {
-      $pp->update_inplace($d);
+      $pp->update_inplace($d, parse_after => 0);
       if (@missing_for_update) {
         my @stanzas = map { $app->render_generated_drv($missing_to_add->{$_}->{release}) } @missing_for_update;
         my $block = $app->format_stanza_block(@stanzas);
@@ -438,12 +565,21 @@ sub command_update ($app, @attrs) {
         $missing_added{$_} = 1 for @missing_for_update;
       }
       if ($app->commit) {
-        my $msg = $d->git_message;
-        my $body = $app->missing_commit_body($missing_to_add, @missing_for_update);
-        if ($body) {
-          $app->git_cmd("commit","--no-gpg-sign","-m", $msg, "-m", $body);
+        $app->format_nix_file($pp);
+      }
+      if ($app->commit) {
+        my $msg = $app->deps_only_enabled
+          ? "perlPackages.".$d->attrname.": fix deps"
+          : $d->git_message;
+        if ($app->git_file_dirty) {
+          my $body = $app->missing_commit_body($missing_to_add, @missing_for_update);
+          if ($body) {
+            $app->git_cmd("commit","--no-gpg-sign","-m", $msg, "-m", $body);
+          } else {
+            $app->git_cmd("commit","--no-gpg-sign","-m", $msg);
+          }
         } else {
-          $app->git_cmd("commit","--no-gpg-sign","-m", $msg);
+          INFO("No net changes for ".$d->attrname.", skipping commit");
         }
       }
     }
@@ -467,16 +603,27 @@ sub command_update ($app, @attrs) {
       $app->append_generated_stanzas_inplace($block);
       $pp->parse_nix_file;
       if ($app->commit) {
+        $app->format_nix_file($pp);
+      }
+      if ($app->commit) {
         # Fallback: if there are missing-only additions, keep them in one commit.
-        my $body = $app->missing_commit_body($missing_to_add, @remaining);
-        my $msg = "perlPackages: add remaining missing deps";
-        if ($body) {
-          $app->git_cmd("commit", "--no-gpg-sign", "-m", $msg, "-m", $body);
+        if ($app->git_file_dirty) {
+          my $body = $app->missing_commit_body($missing_to_add, @remaining);
+          my $msg = "perlPackages: add remaining missing deps";
+          if ($body) {
+            $app->git_cmd("commit", "--no-gpg-sign", "-m", $msg, "-m", $body);
+          } else {
+            $app->git_cmd("commit", "--no-gpg-sign", "-m", $msg);
+          }
         } else {
-          $app->git_cmd("commit", "--no-gpg-sign", "-m", $msg);
+          INFO("No net changes for remaining missing deps, skipping commit");
         }
       }
     }
+  }
+
+  if ($app->inplace && !$app->commit) {
+    $app->format_nix_file($pp);
   }
 
   return 0;
@@ -515,6 +662,38 @@ sub git_sanity ($app) {
     die "git_sanity error:\n".join("", @err) if @err;
 }
 
+sub git_file_dirty ($app) {
+   my $file = $app->nix_file;
+   die "git_file_dirty: Invalid nix_file $file" unless $file && -f $file;
+   my $dir = dirname($file);
+   my $rel_file = basename($file);
+   my ($ok, $err, $buf) =
+     run( command => ["git", "-C", $dir, "status", "--porcelain", $rel_file] );
+   die "$err: ".join("", @$buf) unless $ok;
+   return join("", @$buf) ne q{};
+}
+
+sub deps_only_enabled ($app) {
+  return 0 unless $app->can("deps_only");
+  return $app->deps_only ? 1 : 0;
+}
+
+sub validate_drv_dependency_attrs ($app, $drv, $known_attrs, $missing_to_add = {}) {
+  my %unknown;
+  foreach my $attr ($drv->build_inputs, $drv->propagated_build_inputs) {
+    next unless defined $attr && length $attr;
+    next if $attr =~ /^pkgs\./;
+    next if $known_attrs->{$attr};
+    next if $missing_to_add->{$attr};
+    $unknown{$attr} = 1;
+  }
+  if (%unknown) {
+    my @list = sort keys %unknown;
+    die "Unknown dependency attrs for " . $drv->attrname . ": " . join(", ", @list)
+      . ". Add a valid module/distribution mapping in errata or enable --missing if appropriate.";
+  }
+}
+
 
 
 sub update_attr ($app, $metacpan, $pp, $attrname) {
@@ -523,12 +702,44 @@ sub update_attr ($app, $metacpan, $pp, $attrname) {
     die "Cannot find $attrname in perlPackages";
   }
 
-  my $mc = $metacpan->get_by(distribution => $drv->name);
-  unless ($mc) {
-    die "Cannot find " . $drv->name . "on MetaCPAN";
+  my $name = $drv->distribution_name;
+  unless (defined $name && length $name) {
+    WARN("Skipping $attrname: no name found");
+    return;
   }
 
-  unless ($mc->newer_than($drv->version)) {
+  my $mc = $metacpan->get_by(distribution => $name);
+  unless ($mc) {
+    die "Cannot find " . $name . " on MetaCPAN";
+  }
+
+  if ($app->deps_only_enabled) {
+    $drv->update_deps_from_metacpan($mc);
+    return $drv;
+  }
+
+  my $version = $drv->version;
+  unless (defined $version && length $version) {
+    WARN("Skipping $attrname: no version found");
+    return;
+  }
+
+  my $url = $drv->get_top_level_attr("url");
+  my $hash = $drv->get_top_level_attr("hash");
+  if (!defined $url) {
+    my $tmp = eval { $drv->get_attr("url") };
+    $url = $tmp if !$@;
+  }
+  if (!defined $hash) {
+    my $tmp = eval { $drv->get_attr("hash") };
+    $hash = $tmp if !$@;
+  }
+  unless (defined $url && defined $hash) {
+    WARN("Skipping $attrname: no updatable url/hash source");
+    return;
+  }
+
+  unless ($mc->newer_than($version)) {
     return;
   }
 

@@ -5,6 +5,7 @@ use strict;
 use warnings;
 use Exporter 'import';
 use IPC::Cmd qw(run);
+use Cwd qw(abs_path);
 
 our @EXPORT_OK = qw(run_cmd run_ok git_cmd git_ok run_nix_cpan);
 
@@ -44,7 +45,9 @@ sub git_ok ($name, $repo, @args) {
 }
 
 sub run_nix_cpan ($cache_home, $extra_env, @args) {
-  my @cmd = ("env", "XDG_CACHE_HOME=$cache_home");
+  my $test_bin = abs_path("t/bin");
+  my $path = $ENV{PATH} // q{};
+  my @cmd = ("env", "XDG_CACHE_HOME=$cache_home", "PATH=$test_bin:$path");
   if ($extra_env && ref($extra_env) eq "HASH") {
     push @cmd, map { $_ . "=" . $extra_env->{$_} } sort keys %$extra_env;
   }

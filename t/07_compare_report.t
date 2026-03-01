@@ -30,19 +30,12 @@ my $res = run_nix_cpan(
   "--nix-file",
   "t/var/perl-packages.nix",
 );
-ok($res->{ok}, "compare --report command succeeds");
-ok(!defined($res->{err}) || $res->{err} eq "", "compare --report has no stderr");
+ok(!$res->{ok}, "compare --report fails fast on unresolved dependencies in strict mode");
 
-my $out = $res->{out};
-like($out, qr/Updates:\s+\d+\s+total/, "report prints total update count");
-like($out, qr/safe\s+\(dep changes = 0\):\s+\d+/, "report prints safe bucket count");
-like($out, qr/moderate\s+\(dep changes 1-6\):\s+\d+/, "report prints moderate bucket count");
-like($out, qr/high\s+\(dep changes >=7\):\s+\d+/, "report prints high bucket count");
-like($out, qr/High priority updates:/, "report includes high-priority section");
-like($out, qr/Moderate priority updates:/, "report includes moderate-priority section");
-like($out, qr/Safe priority updates:/, "report includes safe-priority section");
-like($out, qr/Missing dependencies not present in nix_file:\s+\d+/,
-     "report_missing prints missing-dependency summary");
-unlike($out, qr/\(UPDATE\)/, "report mode suppresses line-by-line compare output");
+my $diag = ($res->{out} // q{}) . "\n" . ($res->{err} // q{});
+like($diag, qr/Cannot resolve dependency module/,
+     "strict mode reports unresolved dependency module");
+like($diag, qr/Errata\.yaml ignoreModule/,
+     "strict mode points to explicit exception mechanism");
 
 done_testing();

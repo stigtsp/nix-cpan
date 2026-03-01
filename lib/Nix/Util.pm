@@ -236,8 +236,8 @@ sub render_license {
         }
     }
 
-    INFO("license: $cpan_license");
-    WARN("License '$cpan_license' is ambiguous, please verify") if $amb;
+    DEBUG("license: $cpan_license");
+    DEBUG("License '$cpan_license' is ambiguous, please verify") if $amb;
     return $license_line;
 }
 
