@@ -42,6 +42,10 @@ in mkShell {
   buildInputs = with perl.pkgs; [
     perl
     sqlite
+    # nixfmt: required by the write/commit path (has_nixfmt). The tool formats
+    # generated/edited nix. For CI parity with nixpkgs treefmt this should match
+    # the nixfmt the target nixpkgs pins; see PLAN.ng.md D2.
+    pkgs.nixfmt
     # perl modules
     Applify
     FileXDG

@@ -58,23 +58,22 @@ conditionals/comments; unacceptable for the macOS special-cases.
 **Risk owned:** read (eval) and write (text) are different problems; a passing
 edit must still be validated by eval/build, never assumed from the text diff.
 
-### D2 — nixfmt: pin the nixpkgs formatter, format only the changed region
-**Decision:** Add the exact `nixfmt` nixpkgs uses (`pkgs.nixfmt`, the RFC-style
-formatter invoked by `ci/treefmt.nix`) to `shell.nix`. Format **only the edited
-derivation block(s)**, not the whole 40k-line file.
-**Rationale:** `nixfmt` is currently absent from `shell.nix` → the write/commit
-path dies in `has_nixfmt` (confirmed: `command not found`). Whole-file
-formatting risks reformatting unrelated lines and drowning the real diff.
-**Risk owned:** region-only formatting must produce byte-identical output to what
-whole-file `nixfmt` would produce, or CI's treefmt check fails.
-**Premise under test (2026-06-26):** if `perl-packages.nix` is *already*
-nixfmt-canonical (CI treefmt-enforced), whole-file nixfmt is a no-op on untouched
-lines and only the edit shows — making whole-file the *simpler, lower-risk* choice
-(exact CI parity, no byte-identical reproduction risk). Test:
-`nixfmt < perl-packages.nix | diff - perl-packages.nix` using **`~/nixpkgs`'s own
-pinned nixfmt** (its `ci/treefmt.nix`), NOT the nix-shell unstable one. If the
-diff is empty, switch D2 to whole-file and drop region-only. (Build of the pinned
-nixfmt was in progress at time of writing.)
+### D2 — nixfmt: pin the nixpkgs formatter, format the whole file
+**Decision:** Add `pkgs.nixfmt` to `shell.nix`; the updater runs whole-file
+`nixfmt` (as the tool already does) after edits. **Region-only formatting is NOT
+needed** and is rejected.
+**Rationale (resolved 2026-06-26):** Two facts settled this.
+(1) `~/nixpkgs` pins **nixfmt 1.3.1**, identical to the version the dev
+shell's channel provides — so the dev-shell nixfmt has exact CI parity; no need to
+build nixfmt from the target tree.
+(2) `nixfmt - < perl-packages.nix | diff - perl-packages.nix` = **0 lines** — the
+file is already nixfmt-canonical (CI treefmt-enforced). So whole-file nixfmt is a
+no-op on untouched lines and only the real edit appears in the diff. Whole-file is
+therefore *simpler and lower-risk* than region-only (which carried a
+byte-identical-reproduction risk, now moot).
+**Note:** the tool invokes `nixfmt <file>` (file arg, formats in place) — the
+non-deprecated form. Only bare-stdin `nixfmt` is deprecated in 1.3.1.
+**Status:** Bug #1 fixed (nixfmt added to shell.nix; `nixfmt --version` → 1.3.1).
 
 ### D3 — Sequencing: curated safe batch first, then expand
 **Phase 1** version+hash-only bumps (no dep changes) on a curated batch, verified
@@ -132,9 +131,10 @@ Design around the loop's asymmetry — bake these into the tooling:
 ## Roadmap (phased)
 
 - [ ] **P0 — Unblock the loop**
-  - [ ] Pin `nixfmt` (and confirm exact nixpkgs version) in `shell.nix` (Bug #1).
-  - [ ] Region-only formatting (D2).
-  - [ ] Confirm `~/nixpkgs` build invocation works for one known package.
+  - [x] Pin `nixfmt` in `shell.nix` (Bug #1) — 1.3.1, matches `~/nixpkgs`.
+  - [x] nixfmt strategy (D2) — whole-file; file is already canonical.
+  - [x] Confirm `~/nixpkgs` build works: `nix-build ~/nixpkgs -A
+        perlPackages.TryTiny` → exit 0 (builds from source; perl 5.42.0).
 - [ ] **P1 — Safe bulk bumps** (version+src+hash only, deps untouched)
   - [ ] `compare --report` against real file; pick a curated batch.
   - [ ] `update --inplace --diff` batch; verify diffs touch only intended bytes.
@@ -154,10 +154,10 @@ Design around the loop's asymmetry — bake these into the tooling:
 
 > Format: `#N (date) [status] symptom — repro — affected — notes`
 
-- **#1 (2026-06-26) [open] nixfmt missing from dev shell.** `nix-shell --run
-  "nixfmt --version"` → `command not found`; tool dies in `has_nixfmt` on any
-  write/commit. Repro: any `update --inplace`. Fix: add `nixfmt` to `shell.nix`
-  (D2). Blocking.
+- **#1 (2026-06-26) [FIXED] nixfmt missing from dev shell.** `nix-shell --run
+  "nixfmt --version"` → `command not found`; tool died in `has_nixfmt` on any
+  write/commit. Fixed by adding `pkgs.nixfmt` to `shell.nix` (1.3.1, matches
+  `~/nixpkgs`). Verified: `nixfmt --version` → 1.3.1.
 - **#2 (2026-06-26) [open, by-design] complex input lists silently skipped.**
   `set_or_add_attr_list` skips any input list that isn't a plain `[ … ]` (e.g. a
   `++ lib.optionals …` suffix). Census across the real file: `buildInputs`
