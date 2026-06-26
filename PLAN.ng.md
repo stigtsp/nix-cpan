@@ -1,0 +1,185 @@
+# PLAN.ng — making nix-cpan a bulk perlPackages updater
+
+> Living planning document for the `ng` branch. Append findings and decisions as
+> we go; a future Claude/agent should be able to reconstruct *why* from this file
+> alone. Keep entries dated (today is 2026-06-26).
+
+## Mission / north star
+
+A `nix-cpan` that can **automatically bump every package in nixpkgs'
+`pkgs/top-level/perl-packages.nix`** — version, source, hash, dependencies,
+license, description — correctly and without munging hand-written special-cases
+(macOS/platform conditionals, `doCheck`, `broken`, patch phases). End state:
+the tool is reliable enough to run unattended as an updater script / bot.
+
+## Goals
+
+- Bump version + `src.url` + `src.hash` for all updatable derivations.
+- Keep dependency lists (`buildInputs` / `propagatedBuildInputs`) in sync with
+  *actual* build/runtime needs — not blindly with what MetaCPAN/CPAN metadata
+  claims (that's what errata exists to correct).
+- Update `meta` (license, description, homepage) in the same commit as the bump.
+- **One commit per package**, containing *all* of that package's own changes
+  (version/src/hash + deps + meta). New dependency packages land as separate
+  `perlPackages.X: init at <version>` commits.
+- Verify with real `nix` evaluation and builds, not just self-tests.
+- Manage errata as a living, build-driven dataset (add from failures, prune the
+  obsolete where tests permit).
+- Produce an updater-script entry point suitable for automation.
+
+## Non-goals (for now)
+
+- A general-purpose Nix parser/formatter. We rely on nixfmt-canonical input.
+- Rewriting derivations that use complex/conditional input lists (`++
+  lib.optionals …`) — these are detected and **skipped**, not mangled (tracked).
+- Updating packages not sourced from CPAN, or with non-`fetchurl` sources.
+- Touching `doCheck`/`broken`/patch logic — these are human decisions.
+
+## Ratified decisions (ADR-style)
+
+### D1 — Parser: harden the line-based locator + use `nix eval` for authoritative reads
+**Decision:** Keep the existing line-based parser for *locating* and *editing*
+derivation blocks. Use `nix eval` as the authoritative reader for verification
+(computed version, resolved buildInputs after conditionals). Adopt a CST parser
+(tree-sitter-nix / rnix) **only if** a concrete munging bug appears that the
+line-based approach cannot handle safely.
+**Rationale:** Spike on the real file (2026-06-26): **1911/1911** parsed blocks
+match exactly once — no gaps/overlaps/bleed; no duplicate attrnames; version/src
+edits preserved every `++ lib.optionals` suffix. Boundary detection is *not* the
+weak point. A CST rewrite adds a non-Perl build dependency and large up-front
+cost for a problem we have not yet hit.
+**Recall verified (2026-06-26):** of all top-level `X = buildPerl(Package|Module)`
+definitions, **0** are missed by the parser; it additionally catches the 2
+hyphenated attrs (`constant-defer`, `libintl-perl`) that a `\w+`-only grep misses.
+So recall — the killer failure mode for a "bulk update *all*" tool — is full.
+**Alternatives rejected:** (a) Grammar/CST now — premature given the data.
+(b) Eval-and-regenerate whole stanzas — reformats and destroys hand-written
+conditionals/comments; unacceptable for the macOS special-cases.
+**Risk owned:** read (eval) and write (text) are different problems; a passing
+edit must still be validated by eval/build, never assumed from the text diff.
+
+### D2 — nixfmt: pin the nixpkgs formatter, format only the changed region
+**Decision:** Add the exact `nixfmt` nixpkgs uses (`pkgs.nixfmt`, the RFC-style
+formatter invoked by `ci/treefmt.nix`) to `shell.nix`. Format **only the edited
+derivation block(s)**, not the whole 40k-line file.
+**Rationale:** `nixfmt` is currently absent from `shell.nix` → the write/commit
+path dies in `has_nixfmt` (confirmed: `command not found`). Whole-file
+formatting risks reformatting unrelated lines and drowning the real diff.
+**Risk owned:** region-only formatting must produce byte-identical output to what
+whole-file `nixfmt` would produce, or CI's treefmt check fails.
+**Premise under test (2026-06-26):** if `perl-packages.nix` is *already*
+nixfmt-canonical (CI treefmt-enforced), whole-file nixfmt is a no-op on untouched
+lines and only the edit shows — making whole-file the *simpler, lower-risk* choice
+(exact CI parity, no byte-identical reproduction risk). Test:
+`nixfmt < perl-packages.nix | diff - perl-packages.nix` using **`~/nixpkgs`'s own
+pinned nixfmt** (its `ci/treefmt.nix`), NOT the nix-shell unstable one. If the
+diff is empty, switch D2 to whole-file and drop region-only. (Build of the pinned
+nixfmt was in progress at time of writing.)
+
+### D3 — Sequencing: curated safe batch first, then expand
+**Phase 1** version+hash-only bumps (no dep changes) on a curated batch, verified
+end-to-end with nix builds → **Phase 2** dependency + errata management →
+**Phase 3** meta updates folded in → **Phase 4** bot/updater script.
+**Rationale:** De-risks the write/commit/build loop before layering the hard
+actual-vs-metadata dependency problem on top.
+
+### D4 — New dependency derivations get their own `init at V` commits
+**Decision:** A bump's own changes are one commit. Any *new* dependency package it
+pulls in is a separate `perlPackages.X: init at <version>` commit.
+**Rationale:** Matches nixpkgs convention; keeps per-package bump commits clean.
+**Gap to fix:** current code emits a combined `perlPackages: add remaining
+missing deps` commit (nix-cpan.pl ~600-622) — violates this; must change to
+per-package init commits.
+
+## Commit-shape requirement (from user, 2026-06-26)
+
+One commit per package bump = **all** of that package's changes together:
+version + src + hash + dependency-list changes + license + description. This
+means the updater must apply meta (license/description/homepage) updates in the
+same pass as the version bump — see Bug #4 (meta not currently updated).
+
+## Verification methodology
+
+Design around the loop's asymmetry — bake these into the tooling:
+
+- **Cheap pre-gate:** `nix eval` the resolved `buildInputs`/`propagatedBuildInputs`
+  + version before vs after, to catch unintended changes without building.
+- **Build gate:** `nix-build -A perlPackages.<attr>` (in `~/nixpkgs`) for affected
+  packages only — 1915 full builds is infeasible per-change.
+- **Asymmetry — state it loudly:** a passing build (with `doCheck`) proves deps
+  are *sufficient*, never *minimal*. We can detect **missing** deps from build
+  failures; we **cannot** detect **obsolete** errata without removing it and
+  rebuilding.
+- **Blind spot:** `doCheck = false` packages have no test net; their runtime deps
+  can't be validated by building. Flag such packages; treat their dep changes as
+  unverified.
+- **Regression definition:** eval diff shows unintended change, OR build/check
+  fails that passed before, OR the runtime closure changes unexpectedly.
+
+## Errata management (build-loop process)
+
+`Errata.yaml` is "hopelessly outdated" (user). Treat it as a build-driven dataset:
+
+- **Adding:** a build failure → identify the missing module → add the minimal
+  `extra{Build,Runtime}Dependencies` / `moduleResolutionOverrides` entry → record
+  symptom + repro + affected package in the Bug log below.
+- **Pruning:** an errata entry is only safely removable by *removing it and
+  rebuilding* with tests. Bounded by test coverage — `doCheck = false` packages
+  can't have their errata safely pruned. Do not bulk-delete.
+- Every applied errata already logs a WARN; consider a `--report-errata` mode to
+  surface which entries actually fired during a run (dead-entry detection).
+
+## Roadmap (phased)
+
+- [ ] **P0 — Unblock the loop**
+  - [ ] Pin `nixfmt` (and confirm exact nixpkgs version) in `shell.nix` (Bug #1).
+  - [ ] Region-only formatting (D2).
+  - [ ] Confirm `~/nixpkgs` build invocation works for one known package.
+- [ ] **P1 — Safe bulk bumps** (version+src+hash only, deps untouched)
+  - [ ] `compare --report` against real file; pick a curated batch.
+  - [ ] `update --inplace --diff` batch; verify diffs touch only intended bytes.
+  - [ ] `nix-build` the batch; record failures.
+  - [ ] Per-package commits via tool automation only (never agent commits in
+        `~/nixpkgs`).
+- [ ] **P2 — Dependency + errata management**
+  - [ ] Eval-based actual-vs-metadata dep diffing.
+  - [ ] Handle complex/conditional input lists (currently skipped — Bug #2).
+  - [ ] Errata add/prune loop.
+- [ ] **P3 — Meta updates** folded into the same commit (Bug #4).
+- [ ] **P4 — Automation**
+  - [ ] Updater-script entry point; idempotent, resumable, machine-readable report.
+  - [ ] Per-package `init at V` commits for new deps (D4 gap).
+
+## Bug / finding log
+
+> Format: `#N (date) [status] symptom — repro — affected — notes`
+
+- **#1 (2026-06-26) [open] nixfmt missing from dev shell.** `nix-shell --run
+  "nixfmt --version"` → `command not found`; tool dies in `has_nixfmt` on any
+  write/commit. Repro: any `update --inplace`. Fix: add `nixfmt` to `shell.nix`
+  (D2). Blocking.
+- **#2 (2026-06-26) [open, by-design] complex input lists silently skipped.**
+  `set_or_add_attr_list` skips any input list that isn't a plain `[ … ]` (e.g. a
+  `++ lib.optionals …` suffix). Census across the real file: `buildInputs`
+  simple=781 / complex=3 / none; `propagatedBuildInputs` simple=1106 / complex=4 /
+  none=801. **7 derivations** have ≥1 skipped input list (not 3). Safe (no
+  munging) but their deps won't be auto-managed. Needs explicit handling or a
+  reported skip-list in P2 — this is exactly the dependency-management surface the
+  user cares about most.
+- **#3 (2026-06-26) [open] combined missing-deps commit.** nix-cpan.pl ~600-622
+  emits `perlPackages: add remaining missing deps` as one commit — violates D4
+  per-package `init at V` commits.
+- **#4 (2026-06-26) [open] meta not updated on bump.** `update_from_metacpan`
+  updates version/url/hash + dep lists but not `meta` (license/description/
+  homepage). User requires these in the same commit. Needs a meta-update path.
+- **#5 (2026-06-26) [open] errata stale.** `Errata.yaml` inherited from cpan2nix,
+  known outdated. To be managed via the build loop above.
+
+## Open questions
+
+- Region-only nixfmt: does it reproduce whole-file nixfmt byte-for-byte? (D2 risk)
+- How to detect *obsolete* errata at scale given the removal+rebuild cost?
+- `version_numified` vs `Sort::Versions` — are there packages where MetaCPAN's
+  "latest" disagrees with what we'd pick? (filter_releases dedup logic)
+- Packages with non-`fetchurl` / non-CPAN sources: enumerate and exclude cleanly.
+- Updater-script output contract for the future bot (JSON report shape).
