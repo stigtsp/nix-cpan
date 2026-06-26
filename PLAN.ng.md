@@ -170,7 +170,9 @@ Design around the loop's asymmetry — bake these into the tooling:
         **DateTimeTimeZone 2.60->2.68** (gains ModuleRuntime,TryTiny) → build+tests
         exit 0; **CGI 4.59->4.72** (gains URI, **drops obsolete TestDeep**) →
         build+tests exit 0 (MetaCPAN's dep removal was correct — strong signal that
-        metadata-driven dep updates are buildable). DBIxClassCandy in progress.
+        metadata-driven dep updates are buildable). **DBIxClassCandy 0.005003->
+        0.005004 → exit 0 too. P2a result: 3/3 moderate dep-updates build + pass
+        tests.**
   - [x] src-block-scoped editing (Bug #10) + legacy sha256 (Bug #9) — DONE, lets
         fetchpatch/legacy derivations bump (EV, NetCUPS, AlgorithmBackoff).
   - [ ] Eval-based actual-vs-metadata dep diffing.
