@@ -177,7 +177,17 @@ Design around the loop's asymmetry — bake these into the tooling:
         fetchpatch/legacy derivations bump (EV, NetCUPS, AlgorithmBackoff).
   - [ ] Eval-based actual-vs-metadata dep diffing.
   - [ ] Handle complex/conditional input lists (currently skipped — Bug #2, 7 drvs).
-  - [ ] Errata add/prune loop; `--report-errata` for dead-entry detection.
+  - [x] Errata audit + gated prune — `nix-cpan errata` (+ `--prune`). DONE.
+        Classifies extra{Build,Runtime}Dependencies vs the live cache:
+        provably-redundant / load-bearing / findings. **28 redundant on the
+        current cache = 18 prunable + 10 commented hedges.** `--prune` removes
+        only redundant+uncommented (18 applied, hedges retained). Module
+        `Errata/Audit.pm` + t/20.
+  - [ ] Errata ADD-from-build-failure loop (separate session — needs build runs).
+  - [ ] Audit the other 3 buckets: `moduleResolutionOverrides` (redundant if
+        `resolve_module` finds it without the override), `buildFunctionOverrides`
+        (redundant if `preferred_build_fun` agrees), `ignoreModule` (hardest —
+        suppresses a die).
 - [ ] **P3 — Meta updates** folded into the same commit (Bug #4).
 - [ ] **P4 — Automation**
   - [ ] Updater-script entry point; idempotent, resumable, machine-readable report.
@@ -254,6 +264,21 @@ Design around the loop's asymmetry — bake these into the tooling:
   correct; patch validity is a separate, *build-detectable* concern. The updater
   should flag (not auto-edit) derivations whose `patches` reference the old
   version, and a build is required to confirm such bumps.
+
+- **#12 (2026-06-26) [key insight] "redundant in cache" ≠ "safe to remove".**
+  Some errata extra-deps are *deliberate hedges* against MetaCPAN snapshot
+  unreliability — their comments say so ("MetaCPAN can miss module->distribution
+  mapping ... in some snapshots"; libwww-perl: "pin distro names"). They look
+  redundant against the current cache but protect against incomplete future
+  snapshots. Therefore the audit *reports* redundancy but `--prune` only removes
+  redundant entries whose dist block has **no comment** (comment = intent signal).
+  A proper hedge-vs-stale classifier is out of scope (a comment is the proxy).
+- **#13 (2026-06-26) [test fragility] t/05 is coupled to the real Errata.yaml.**
+  t/05 asserts specific live errata entries (HTTP-Message:URI, HTML-Parser:*,
+  libwww-perl:HTML-Parser) using a *mock cache that omits those deps* — i.e. it
+  encodes the hedge behavior. This is why those entries must never be auto-pruned,
+  and why "managed errata" makes t/05 brittle. Don't refactor now; if errata
+  curation continues, give t/05 its own fixture errata instead of the real file.
 
 ## Open questions
 
