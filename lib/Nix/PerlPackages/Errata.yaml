@@ -45,8 +45,6 @@ extraBuildDependencies:
   Corona:
     - Test::SharedFork
     - Test::TCP
-  Crypt-SSLeay:
-    - Path::Class
   DBIx-Introspector:
     - Test::Fatal
   Data-FormValidator:
@@ -98,17 +96,8 @@ extraBuildDependencies:
     - IO::String
   FormValidator-Simple:
     - CGI
-  Gnome2-Canvas:
-    - ExtUtils::PkgConfig
-    - ExtUtils::Depends
-  Gtk2-TrayIcon:
-    - ExtUtils::PkgConfig
-    - ExtUtils::Depends
-    - Glib::CodeGen
   Gtk2-Unique:
     - Glib::CodeGen
-  HTML-Selector-XPath:
-    - Test::Base
   HTML-Tidy:
     - Test::Exception
   HTTP-Response-Encoding:
@@ -190,14 +179,12 @@ extraBuildDependencies:
     - HTTP::Cookies
     - LWP::UserAgent
     - Params::Validate
-    - Test::Exception
   SDL:
     - Test::Exception
     - Test::Differences
     - Test::Warn
     - Test::Deep
   Sereal:
-    - Test::Deep
     - Test::MemoryGrowth
   Starlet:
     - Test::SharedFork
@@ -251,22 +238,15 @@ extraRuntimeDependencies:
   Crypt-DES_EDE3:
     # .meta file is 404
     - Crypt::DES
-  Crypt-PKCS10:
-    - Convert::ASN1
   Crypt-SSLeay:
-    - LWP::Protocol::https
     - Bytes::Random::Secure
   Crypt-ScryptKDF:
     # https://github.com/NixOS/nixpkgs/pull/71128
     - Crypt::OpenSSL::Random
-  DBD-Sybase:
-    - DBI
   Device-OUI:
     - Class::Accessor::Grouped
     - Sub::Exporter
     - LWP
-  ExtUtils-F77:
-    - File::Which
   GDTextUtil:
     - GD
   Gnome2-Canvas:
@@ -315,14 +295,8 @@ extraRuntimeDependencies:
   LWP-Protocol-https:
     # Net::HTTPS is provided by Net-HTTPS-NB in nixpkgs.
     - Net::HTTPS::NB
-  Linux-Inotify2:
-    - common::sense
   Log-LogLite:
     - IO::LockedFile
-  Net-SSH-Perl:
-    - File::HomeDir
-  Net-Amazon-S3:
-    - Exporter::Tiny
   Proc-WaitStat:
     - IPC::Signal
   RSS-Parser-Lite:
@@ -335,14 +309,10 @@ extraRuntimeDependencies:
     - Unicode::GCString
   Text-WrapI18N:
     - Text::CharWidth
-  Test2-Harness:
-    - Data::UUID
   XML-Grove:
     - Data::Grove
   XML-Handler-YAWriter:
     - XML::Parser::PerlSAX
-  XML-SAX:
-    - XML::SAX::Exception
   libxml-perl:
     - XML::Parser
 buildFunctionOverrides:
