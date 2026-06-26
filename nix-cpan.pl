@@ -724,17 +724,11 @@ sub update_attr ($app, $metacpan, $pp, $attrname) {
     return;
   }
 
-  my $url = $drv->get_top_level_attr("url");
-  my $hash = $drv->get_top_level_attr("hash");
-  if (!defined $url) {
-    my $tmp = eval { $drv->get_attr("url") };
-    $url = $tmp if !$@;
-  }
-  if (!defined $hash) {
-    my $tmp = eval { $drv->get_attr("hash") };
-    $hash = $tmp if !$@;
-  }
-  unless (defined $url && defined $hash) {
+  # url/hash are scoped to the src fetcher block (a derivation may also have
+  # url/hash inside a fetchpatch in `patches = [ ... ]`).
+  my $url = $drv->src_url;
+  my $hash_attr = $drv->src_hash_attr;
+  unless (defined $url && defined $hash_attr) {
     WARN("Skipping $attrname: no updatable url/hash source");
     return;
   }

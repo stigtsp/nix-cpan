@@ -217,8 +217,25 @@ class Nix::PerlPackages::Drv {
     }
 
     $self->_set_attr_prefer_top_level("version", $version);
-    $self->_set_attr_prefer_top_level("url", $url);
-    $self->_set_attr_prefer_top_level("hash", $hash);
+    # url/hash live inside the src fetcher block; edit them there so we never
+    # touch a url/hash belonging to a fetchpatch in `patches = [ ... ]`. Fall
+    # back to top-level for forms (and test fixtures) without a src block.
+    my $hash_attr = $self->src_hash_attr // "hash";
+    if ($self->_has_src_block) {
+      $self->_set_src_attr("url", $url);
+      if ($hash_attr eq "sha256") {
+        $self->_set_src_attr("sha256", $checksum); # legacy hex form
+      } else {
+        $self->_set_src_attr("hash", $hash);
+      }
+    } else {
+      $self->_set_attr_prefer_top_level("url", $url);
+      if ($hash_attr eq "sha256") {
+        $self->_set_attr_prefer_top_level("sha256", $checksum);
+      } else {
+        $self->_set_attr_prefer_top_level("hash", $hash);
+      }
+    }
 
     my @build_inputs = $mc->build_inputs();
     my @existing_build_inputs = $self->build_inputs();
@@ -367,6 +384,85 @@ class Nix::PerlPackages::Drv {
       $depth += $self->_brace_delta($masked);
     }
     return undef;
+  }
+
+  # --- src-block-scoped accessors -------------------------------------------
+  # url/hash live inside `src = <fetcher> { ... }`. A derivation may also carry
+  # `patches = [ (fetchpatch { url=...; hash=...; }) ]`, so editing url/hash on
+  # the whole derivation part is ambiguous. These helpers restrict reads/writes
+  # to the src fetcher block only.
+
+  method _src_span_lines($lines) {
+    my %state = (in_block_comment => 0, in_dquote => 0, in_squote => 0);
+    my $depth = 0;
+    my $start;
+    my $base_depth;
+    for (my $i = 0; $i < @$lines; $i++) {
+      my $masked = $self->_mask_nix_line($lines->[$i], \%state);
+      if (!defined $start && $masked =~ /^\s*src\s*=\s*\S/) {
+        $start = $i;
+        $base_depth = $depth;
+      }
+      $depth += $self->_brace_delta($masked);
+      if (defined $start && $i >= $start && $depth <= $base_depth) {
+        return ($start, $i);
+      }
+    }
+    return;
+  }
+
+  method _get_src_attr($attr) {
+    my @lines = split /\n/, $part, -1;
+    my ($s, $e) = $self->_src_span_lines(\@lines);
+    return undef unless defined $s;
+    for my $i ($s .. $e) {
+      if ($lines[$i] =~ /^\s*\Q$attr\E\s*=\s*(["'])(.*)\1;\s*$/) {
+        return $2;
+      }
+    }
+    return undef;
+  }
+
+  method _set_src_attr($attr, $val) {
+    my @lines = split /\n/, $part, -1;
+    my ($s, $e) = $self->_src_span_lines(\@lines);
+    die "Unable to locate src block to set $attr" unless defined $s;
+    my $updated = 0;
+    for my $i ($s .. $e) {
+      if (!$updated && $lines[$i] =~ /^(\s*\Q$attr\E\s*=\s*)(["'])(.*)\2;(\s*)$/) {
+        $lines[$i] = $1 . "\"$val\";" . $4;
+        $updated = 1;
+      }
+    }
+    die "Unable to update src $attr" unless $updated;
+    $part = join("\n", @lines);
+    return 1;
+  }
+
+  method _has_src_block {
+    my @lines = split /\n/, $part, -1;
+    my ($s, $e) = $self->_src_span_lines(\@lines);
+    return defined $s ? 1 : 0;
+  }
+
+  # Which hash attribute the src uses: 'hash' (modern SRI) or 'sha256' (legacy
+  # hex), or undef if neither is present. Falls back to a top-level attribute
+  # for derivations/fixtures that put url/hash directly on the derivation
+  # instead of inside a src fetcher block.
+  method src_hash_attr {
+    return "hash"
+      if defined $self->_get_src_attr("hash")
+      || defined $self->_get_top_level_attr("hash");
+    return "sha256"
+      if defined $self->_get_src_attr("sha256")
+      || defined $self->_get_top_level_attr("sha256");
+    return undef;
+  }
+
+  method src_url {
+    my $v = $self->_get_src_attr("url");
+    return $v if defined $v;
+    return $self->_get_top_level_attr("url");
   }
 
   method _brace_delta($line) {
