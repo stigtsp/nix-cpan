@@ -153,7 +153,11 @@ Design around the loop's asymmetry — bake these into the tooling:
         **hash sweep 196/196 OK, 0 failures** via cheap `.src` gate.
   - [x] Safe-196 version sanity via version.pm: 0 downgrades, 0 scheme-flip
         no-ops, 0 alpha/dev, 0 parse failures — all genuine forward bumps.
-  - [~] Full safe-196 `--commit` scale run (in progress) — final P1 validation.
+  - [x] Full safe-196 `--commit` scale run: **193 clean per-package commits**
+        (each single-file, canonical, conforming `perlPackages.X: a -> b` msgs).
+        3 not committed — all safe skips, not failures: AlgorithmBackoff (legacy
+        `sha256=` form, Bug #9), EV + NetCUPS (`fetchpatch` multi-url, Bug #10).
+        Final file nixfmt-canonical. nixpkgs reset to baseline after.
 - [ ] **P2 — Dependency + errata management**
   - Scope (measured 2026-06-26): moderate=220, high=40 updates carry dep changes.
     Across moderate+high, **252 distinct added deps**, of which only **23 are not
@@ -225,6 +229,21 @@ Design around the loop's asymmetry — bake these into the tooling:
   already CANONICAL). Likely optimization: skip nixfmt when the edit is a pure
   value substitution, or format once at the end of an inplace batch. Revisit for
   the bot (P4); not a correctness issue.
+
+- **#9 (2026-06-26) [open, completeness] legacy `sha256 = "<hex>"` not handled.**
+  `update_attr` looks only for `hash`/`url`; a derivation whose `src` uses the
+  older `sha256 = "<64-hex>"` form is skipped ("no updatable url/hash source").
+  Affects only **2** derivations in the whole file (e.g. AlgorithmBackoff); 1943
+  use modern `hash = "sha256-…"`. Fix options: update the hex in place, or migrate
+  the 2 to `hash`. Low priority but blocks "all bumps".
+- **#10 (2026-06-26) [open, completeness] derivations with `fetchpatch` skipped.**
+  When a derivation has `patches = [ (fetchpatch { url=…; hash=…; }) ]`, there are
+  multiple `url`/`hash` pairs; `get_attr` refuses the ambiguity, so `update_attr`
+  safely skips (no munging) — but the package never gets bumped (e.g. EV, NetCUPS).
+  Scope: **34 fetchpatch occurrences / 55 `patches` blocks**. Fix: scope url/hash
+  edits to the `src = fetchurl { … }` sub-block specifically (src-block-aware
+  editing) rather than the whole derivation part. This is the main completeness gap
+  for P1-class bumps and should be addressed early in P2.
 
 ## Open questions
 
