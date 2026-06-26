@@ -136,11 +136,15 @@ Design around the loop's asymmetry — bake these into the tooling:
   - [x] Confirm `~/nixpkgs` build works: `nix-build ~/nixpkgs -A
         perlPackages.TryTiny` → exit 0 (builds from source; perl 5.42.0).
 - [ ] **P1 — Safe bulk bumps** (version+src+hash only, deps untouched)
-  - [ ] `compare --report` against real file; pick a curated batch.
-  - [ ] `update --inplace --diff` batch; verify diffs touch only intended bytes.
-  - [ ] `nix-build` the batch; record failures.
-  - [ ] Per-package commits via tool automation only (never agent commits in
-        `~/nixpkgs`).
+  - [x] `compare --report` against real file: **456 updates** (safe=196,
+        moderate=220, high=40). No dep-resolution failures across all candidates.
+  - [x] `update --diff` (no write) on CaptureTiny/ClassDataInheritable/BKeywords:
+        diffs touch only version/url/hash; meta untouched; file not written.
+  - [x] `update --inplace`: git diff = only the 9 intended lines; file stays
+        nixfmt-canonical (verified by empty `nixfmt` diff + equal line count).
+  - [ ] `nix-build` the batch (in progress) — confirms MetaCPAN hashes are correct.
+  - [ ] Per-package `--commit` run on a fresh reset; verify one commit per pkg.
+  - [ ] Scale to the full safe batch (196).
 - [ ] **P2 — Dependency + errata management**
   - [ ] Eval-based actual-vs-metadata dep diffing.
   - [ ] Handle complex/conditional input lists (currently skipped — Bug #2).
@@ -173,7 +177,28 @@ Design around the loop's asymmetry — bake these into the tooling:
   updates version/url/hash + dep lists but not `meta` (license/description/
   homepage). User requires these in the same commit. Needs a meta-update path.
 - **#5 (2026-06-26) [open] errata stale.** `Errata.yaml` inherited from cpan2nix,
-  known outdated. To be managed via the build loop above.
+  known outdated. To be managed via the build loop above. Note: `compare --report`
+  across all 456 update candidates produced **no resolution failures**, so the
+  staleness is likely *wrong/obsolete* entries (inject wrong deps, or no longer
+  needed) rather than missing resolutions that crash. Pruning needs the build loop.
+- **#6 (2026-06-26) [minor/cosmetic] `--diff` prints "Updating inplace" progress.**
+  `update --diff` (no `--inplace`) still emits the Smart::Comments
+  `### Updating inplace` progress bar (the loop is shared). Harmless but
+  misleading. Low priority.
+- **#7 (2026-06-26) [open, correctness] version comparison mis-orders dev &
+  scheme-changed versions.** `newer_than` uses `Sort::Versions::versioncmp`.
+  Observed false "updates": `CatalystPluginAuthentication 0.10_027 -> 0.10026`
+  (a **downgrade** — existing is an underscore/dev release; README TODO already
+  flagged "don't update pre$ versions"); scheme changes like `ZonemasterCLI
+  8.0.1 -> 8.000001` and `AuthenOATH 2.0.1 -> 3.000001` (v-string vs float forms)
+  need scrutiny. Need: (a) skip when the *existing* version is a dev/underscore
+  release, (b) detect version-scheme changes and treat as suspect, not auto-safe.
+  Note: none of these are in the safe-196 batch (verified: no `_` versions there).
+- **Verification cost note (2026-06-26):** the local store has no binary-cache hit
+  for perl 5.42.0, so `nix-build` of a single leaf perl package compiles the perl
+  toolchain + test deps from source (many minutes). This makes per-package full
+  builds expensive at scale → P2/verification must lean on `nix eval` pre-gates and
+  build only a sampled/affected subset, or arrange a substituter.
 
 ## Open questions
 
