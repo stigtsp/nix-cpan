@@ -105,6 +105,11 @@ Design around the loop's asymmetry — bake these into the tooling:
   + version before vs after, to catch unintended changes without building.
 - **Build gate:** `nix-build -A perlPackages.<attr>` (in `~/nixpkgs`) for affected
   packages only — 1915 full builds is infeasible per-change.
+- **Cheap hash gate (KEY for safe bumps):** `nix-build -A perlPackages.<attr>.src`
+  fetches the tarball and verifies the fixed-output hash **without compiling**
+  (~0.5–1s each vs minutes). For pure version+src+hash bumps the only failure mode
+  is a wrong hash, so the `.src` sweep validates the whole safe batch quickly.
+  Verified: all 196 safe bumps pass `.src` (0 hash mismatches).
 - **Asymmetry — state it loudly:** a passing build (with `doCheck`) proves deps
   are *sufficient*, never *minimal*. We can detect **missing** deps from build
   failures; we **cannot** detect **obsolete** errata without removing it and
@@ -135,16 +140,20 @@ Design around the loop's asymmetry — bake these into the tooling:
   - [x] nixfmt strategy (D2) — whole-file; file is already canonical.
   - [x] Confirm `~/nixpkgs` build works: `nix-build ~/nixpkgs -A
         perlPackages.TryTiny` → exit 0 (builds from source; perl 5.42.0).
-- [ ] **P1 — Safe bulk bumps** (version+src+hash only, deps untouched)
-  - [x] `compare --report` against real file: **456 updates** (safe=196,
-        moderate=220, high=40). No dep-resolution failures across all candidates.
-  - [x] `update --diff` (no write) on CaptureTiny/ClassDataInheritable/BKeywords:
-        diffs touch only version/url/hash; meta untouched; file not written.
-  - [x] `update --inplace`: git diff = only the 9 intended lines; file stays
-        nixfmt-canonical (verified by empty `nixfmt` diff + equal line count).
-  - [ ] `nix-build` the batch (in progress) — confirms MetaCPAN hashes are correct.
-  - [ ] Per-package `--commit` run on a fresh reset; verify one commit per pkg.
-  - [ ] Scale to the full safe batch (196).
+- [x] **P1 — Safe bulk bumps** (version+src+hash only, deps untouched) — VERIFIED
+  - [x] `compare --report`: **456 updates** (safe=196, moderate=220, high=40).
+        No dep-resolution failures across all candidates.
+  - [x] `update --diff`/`--inplace` on a 3-pkg batch: edits touch only
+        version/url/hash; meta untouched; file stays nixfmt-canonical.
+  - [x] `nix-build` of 3 full packages: exit 0 — MetaCPAN hashes correct, sources
+        build with tests.
+  - [x] `--commit` on a fresh reset: **one clean commit per package**, correct
+        `perlPackages.X: old -> new` messages, each diff isolated to 1 pkg.
+  - [x] Whole safe-196: applied inplace (586/586 line changes, file canonical);
+        **hash sweep 196/196 OK, 0 failures** via cheap `.src` gate.
+  - [x] Safe-196 version sanity via version.pm: 0 downgrades, 0 scheme-flip
+        no-ops, 0 alpha/dev, 0 parse failures — all genuine forward bumps.
+  - [~] Full safe-196 `--commit` scale run (in progress) — final P1 validation.
 - [ ] **P2 — Dependency + errata management**
   - [ ] Eval-based actual-vs-metadata dep diffing.
   - [ ] Handle complex/conditional input lists (currently skipped — Bug #2).
@@ -185,15 +194,14 @@ Design around the loop's asymmetry — bake these into the tooling:
   `update --diff` (no `--inplace`) still emits the Smart::Comments
   `### Updating inplace` progress bar (the loop is shared). Harmless but
   misleading. Low priority.
-- **#7 (2026-06-26) [open, correctness] version comparison mis-orders dev &
-  scheme-changed versions.** `newer_than` uses `Sort::Versions::versioncmp`.
-  Observed false "updates": `CatalystPluginAuthentication 0.10_027 -> 0.10026`
-  (a **downgrade** — existing is an underscore/dev release; README TODO already
-  flagged "don't update pre$ versions"); scheme changes like `ZonemasterCLI
-  8.0.1 -> 8.000001` and `AuthenOATH 2.0.1 -> 3.000001` (v-string vs float forms)
-  need scrutiny. Need: (a) skip when the *existing* version is a dev/underscore
-  release, (b) detect version-scheme changes and treat as suspect, not auto-safe.
-  Note: none of these are in the safe-196 batch (verified: no `_` versions there).
+- **#7 (2026-06-26) [FIXED] version comparison mis-orders dev & scheme-changed
+  versions.** `newer_than` used `Sort::Versions::versioncmp` (string-segment),
+  giving false "updates": `CatalystPluginAuthentication 0.10_027 -> 0.10026`
+  (downgrade), `ZonemasterCLI 8.0.1 -> 8.000001` (equal scheme flip). Fixed
+  (commit 08b5dba): `newer_than` parses both with `version.pm`, refuses bumps when
+  either side `is_alpha` (dev/trial), compares with Perl version ordering, falls
+  back to versioncmp only when unparseable. Gotcha fixed: quote `'version'->parse`
+  because the class has a `method version`. Test: t/18_version_compare.t (8 cases).
 - **Verification cost note (2026-06-26):** the local store has no binary-cache hit
   for perl 5.42.0, so `nix-build` of a single leaf perl package compiles the perl
   toolchain + test deps from source (many minutes). This makes per-package full
