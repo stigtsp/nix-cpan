@@ -166,8 +166,13 @@ Design around the loop's asymmetry — bake these into the tooling:
     Caveat: some of the 23 may be attr-name-mapping mismatches
     (`distro_name_to_attr` vs nixpkgs casing), not truly missing — verify per case.
     List saved (session scratch): missing_deps.txt.
-  - [ ] Verify dep changes by build+test on a small moderate batch (watch for
-        removed test deps causing failures — the sufficiency/minimality asymmetry).
+  - [x] Verify dep changes by build+test on a small moderate batch:
+        **DateTimeTimeZone 2.60->2.68** (gains ModuleRuntime,TryTiny) → build+tests
+        exit 0; **CGI 4.59->4.72** (gains URI, **drops obsolete TestDeep**) →
+        build+tests exit 0 (MetaCPAN's dep removal was correct — strong signal that
+        metadata-driven dep updates are buildable). DBIxClassCandy in progress.
+  - [x] src-block-scoped editing (Bug #10) + legacy sha256 (Bug #9) — DONE, lets
+        fetchpatch/legacy derivations bump (EV, NetCUPS, AlgorithmBackoff).
   - [ ] Eval-based actual-vs-metadata dep diffing.
   - [ ] Handle complex/conditional input lists (currently skipped — Bug #2, 7 drvs).
   - [ ] Errata add/prune loop; `--report-errata` for dead-entry detection.
@@ -230,20 +235,23 @@ Design around the loop's asymmetry — bake these into the tooling:
   value substitution, or format once at the end of an inplace batch. Revisit for
   the bot (P4); not a correctness issue.
 
-- **#9 (2026-06-26) [open, completeness] legacy `sha256 = "<hex>"` not handled.**
-  `update_attr` looks only for `hash`/`url`; a derivation whose `src` uses the
-  older `sha256 = "<64-hex>"` form is skipped ("no updatable url/hash source").
-  Affects only **2** derivations in the whole file (e.g. AlgorithmBackoff); 1943
-  use modern `hash = "sha256-…"`. Fix options: update the hex in place, or migrate
-  the 2 to `hash`. Low priority but blocks "all bumps".
-- **#10 (2026-06-26) [open, completeness] derivations with `fetchpatch` skipped.**
-  When a derivation has `patches = [ (fetchpatch { url=…; hash=…; }) ]`, there are
-  multiple `url`/`hash` pairs; `get_attr` refuses the ambiguity, so `update_attr`
-  safely skips (no munging) — but the package never gets bumped (e.g. EV, NetCUPS).
-  Scope: **34 fetchpatch occurrences / 55 `patches` blocks**. Fix: scope url/hash
-  edits to the `src = fetchurl { … }` sub-block specifically (src-block-aware
-  editing) rather than the whole derivation part. This is the main completeness gap
-  for P1-class bumps and should be addressed early in P2.
+- **#9 (2026-06-26) [FIXED] legacy `sha256 = "<hex>"` not handled.** Only 2
+  derivations (e.g. AlgorithmBackoff). Fixed (commit 0ff804d): src-scoped setter
+  detects `sha256` vs `hash` and writes the hex checksum for the legacy form.
+  Verified on AlgorithmBackoff (0.009 -> 0.010). Test: t/19.
+- **#10 (2026-06-26) [FIXED] derivations with `fetchpatch` skipped.** `patches =
+  [ (fetchpatch { url; hash }) ]` created multiple url/hash pairs → `update_attr`
+  skipped (no munging) so EV/NetCUPS never bumped. Scope was 34 fetchpatch / 55
+  `patches` blocks. Fixed (commit 0ff804d): url/hash edits are scoped to the
+  `src = <fetcher> { … }` sub-block via `_src_span_lines`; the fetchpatch block is
+  preserved verbatim. Falls back to top-level for src-less fixtures. Verified on
+  EV (4.34 -> 4.37) and NetCUPS (0.64 -> 0.65). Test: t/19. Full suite 186 green.
+- **#11 (2026-06-26) [open, P2/P3] version-specific patches may not apply after a
+  bump.** EV pins `patches = [ EV-4.34-perl-5.42.patch ]`; bumping to 4.37 keeps
+  the patch, which may fail to apply or be unnecessary. The mechanical bump is
+  correct; patch validity is a separate, *build-detectable* concern. The updater
+  should flag (not auto-edit) derivations whose `patches` reference the old
+  version, and a build is required to confirm such bumps.
 
 ## Open questions
 
