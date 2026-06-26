@@ -155,9 +155,18 @@ Design around the loop's asymmetry — bake these into the tooling:
         no-ops, 0 alpha/dev, 0 parse failures — all genuine forward bumps.
   - [~] Full safe-196 `--commit` scale run (in progress) — final P1 validation.
 - [ ] **P2 — Dependency + errata management**
+  - Scope (measured 2026-06-26): moderate=220, high=40 updates carry dep changes.
+    Across moderate+high, **252 distinct added deps**, of which only **23 are not
+    already present as attrs** (would need `--missing` stanza generation). So most
+    dep work is wiring existing attrs; the genuinely-new surface is small.
+    Caveat: some of the 23 may be attr-name-mapping mismatches
+    (`distro_name_to_attr` vs nixpkgs casing), not truly missing — verify per case.
+    List saved (session scratch): missing_deps.txt.
+  - [ ] Verify dep changes by build+test on a small moderate batch (watch for
+        removed test deps causing failures — the sufficiency/minimality asymmetry).
   - [ ] Eval-based actual-vs-metadata dep diffing.
-  - [ ] Handle complex/conditional input lists (currently skipped — Bug #2).
-  - [ ] Errata add/prune loop.
+  - [ ] Handle complex/conditional input lists (currently skipped — Bug #2, 7 drvs).
+  - [ ] Errata add/prune loop; `--report-errata` for dead-entry detection.
 - [ ] **P3 — Meta updates** folded into the same commit (Bug #4).
 - [ ] **P4 — Automation**
   - [ ] Updater-script entry point; idempotent, resumable, machine-readable report.
@@ -207,6 +216,15 @@ Design around the loop's asymmetry — bake these into the tooling:
   toolchain + test deps from source (many minutes). This makes per-package full
   builds expensive at scale → P2/verification must lean on `nix eval` pre-gates and
   build only a sampled/affected subset, or arrange a substituter.
+
+- **#8 (2026-06-26) [perf, for P4 bot] per-commit whole-file nixfmt dominates
+  bulk runtime.** `--commit` runs `format_nix_file` (whole 40k-line nixfmt, ~1-2s)
+  before *each* package commit, so a 196-package run takes ~10+ min mostly in
+  nixfmt. But surgical version/url/hash edits preserve line structure, so the file
+  stays nixfmt-canonical *without* reformatting (observed: inplace edits → file
+  already CANONICAL). Likely optimization: skip nixfmt when the edit is a pure
+  value substitution, or format once at the end of an inplace batch. Revisit for
+  the bot (P4); not a correctness issue.
 
 ## Open questions
 
