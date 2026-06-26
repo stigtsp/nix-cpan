@@ -7,11 +7,15 @@ use Exporter 'import';
 use File::Basename qw(dirname);
 use CPAN::Meta::YAML;
 
-our @EXPORT_OK = qw(errata);
+our @EXPORT_OK = qw(errata errata_file);
 our $errata;
 
+sub errata_file {
+    return dirname(__FILE__) . "/Errata.yaml";
+}
+
 sub _load_errata {
-    my $yaml_file = dirname(__FILE__) . "/Errata.yaml";
+    my $yaml_file = errata_file();
     my $docs = CPAN::Meta::YAML->read($yaml_file)
       or die "Unable to read errata YAML from $yaml_file";
     my $first = eval { $docs->[0] };

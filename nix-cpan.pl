@@ -15,6 +15,8 @@ use lib qw(lib);
 use Cpanel::JSON::XS qw(encode_json);
 use Nix::PerlPackages;
 use Nix::MetaCPANCache;
+use Nix::PerlPackages::Errata qw(errata errata_file);
+use Nix::PerlPackages::Errata::Audit qw(classify_extra_dependencies commented_dist_blocks);
 use Nix::Util qw(sha256_hex_to_sri render_license);
 use Text::Diff ();
 use IPC::Cmd qw(run);
@@ -50,6 +52,10 @@ subcommand update => "Update one or more perlPackage derivations" => sub {
 subcommand generate_missing => "Generate missing dependency stanzas for update candidates" => sub {
   option bool => "inplace" => "Append generated stanzas into nix_file" => 0;
   option file => "out" => "Output file for generated stanzas (used unless --inplace)" => "missing-perl-packages.nix";
+};
+
+subcommand errata => "Audit errata extra-dependencies against the MetaCPAN cache" => sub {
+  option bool => "prune" => "Remove provably-redundant extra-dependency entries from Errata.yaml" => 0;
 };
 
 
@@ -479,6 +485,159 @@ sub command_generate_missing ($app, @attrs) {
     $app->format_path_with_nixfmt($app->out);
     say "Generated ".scalar(@attrs_sorted)." missing dependency stanzas into ".$app->out;
   }
+}
+
+sub command_errata ($app) {
+  $app->init_logging;
+  my $mcc = Nix::MetaCPANCache->new;
+  die "MetaCPAN cache does not exist, download it with:\n    $0 refresh\n\n"
+    unless $mcc->db_file_exists;
+
+  my $cfg = errata();
+  my $result = classify_extra_dependencies($mcc, $cfg);
+  # A comment on a dist block signals deliberate intent (often a hedge against
+  # MetaCPAN snapshot unreliability); such entries are reported but never pruned.
+  my $commented = commented_dist_blocks(errata_file());
+
+  my $total_redundant = 0;
+  my $total_load = 0;
+  my $total_prunable = 0;
+  for my $bucket (sort keys $result->{buckets}->%*) {
+    my $info = $result->{buckets}->{$bucket};
+    my $r = scalar $info->{redundant}->@*;
+    my $l = scalar $info->{load_bearing}->@*;
+    $total_redundant += $r;
+    $total_load += $l;
+    printf("%s: %d entries — %d provably redundant, %d load-bearing\n",
+           $bucket, $info->{total}, $r, $l);
+    for my $e (sort { $a->{dist} cmp $b->{dist} || $a->{module} cmp $b->{module} } $info->{redundant}->@*) {
+      my $is_hedge = $commented->{$bucket}{ $e->{dist} } ? 1 : 0;
+      $total_prunable++ unless $is_hedge;
+      printf("  REDUNDANT%s %-32s %-28s -> %s%s\n",
+             $is_hedge ? "*" : " ",
+             $e->{dist}, $e->{module}, $e->{attr},
+             $is_hedge ? "   [commented hedge — retained]" : "");
+    }
+  }
+
+  if ($result->{findings}->@*) {
+    say "";
+    say "Findings (not auto-pruned; review manually):";
+    for my $f (sort { ($a->{type} cmp $b->{type}) || ($a->{dist} cmp $b->{dist}) } $result->{findings}->@*) {
+      if ($f->{type} eq "dist_not_in_cache") {
+        printf("  dist-not-in-cache       %s\n", $f->{dist});
+      } elsif ($f->{type} eq "deps_unresolvable") {
+        printf("  deps-unresolvable       %-32s %s\n", $f->{dist}, $f->{error} // q{});
+      } elsif ($f->{type} eq "errata_module_unresolvable") {
+        printf("  errata-mod-unresolvable %-32s %s\n", $f->{dist}, $f->{module});
+      } else {
+        printf("  %-22s %s\n", $f->{type}, $f->{dist} // q{});
+      }
+    }
+  }
+
+  my $hedges = $total_redundant - $total_prunable;
+  say "";
+  printf("Summary: %d redundant (%d prunable, %d commented hedges retained), %d load-bearing, %d findings\n",
+         $total_redundant, $total_prunable, $hedges, $total_load, scalar $result->{findings}->@*);
+  say "* = commented hedge: redundant in this cache snapshot but deliberately kept"
+    . " (comment signals intent, e.g. snapshot unreliability)." if $hedges;
+
+  if ($app->prune) {
+    if ($total_prunable == 0) {
+      say "Nothing prunable (all redundant entries are commented hedges).";
+      return 0;
+    }
+    my @to_remove;
+    for my $bucket (sort keys $result->{buckets}->%*) {
+      for my $e ($result->{buckets}->{$bucket}->{redundant}->@*) {
+        next if $commented->{$bucket}{ $e->{dist} }; # never prune commented hedges
+        push @to_remove, [ $bucket, $e->{dist}, $e->{module} ];
+      }
+    }
+    my $removed = $app->prune_errata_entries(\@to_remove);
+    say "Pruned $removed redundant, uncommented errata entr" . ($removed == 1 ? "y" : "ies") . " from " . errata_file();
+  } else {
+    say "Re-run with --prune to remove the $total_prunable redundant + uncommented entries." if $total_prunable;
+  }
+  return 0;
+}
+
+# Surgically remove `- Module::Name` lines under specific bucket/dist keys from
+# Errata.yaml, preserving comments and layout (CPAN::Meta::YAML round-trips do
+# not preserve comments, so we edit the text directly).
+#
+# Each distribution key is treated as a block: the "  Dist:" line plus the
+# following comment/item lines (indent >= 3) up to the next key. We drop the
+# redundant item lines; if a block has no item lines left, the whole block
+# (key + its comments) is removed. Comments are kept whenever any item remains.
+sub prune_errata_entries ($app, $to_remove) {
+  my $file = errata_file();
+  open my $fh, "<", $file or die "Cannot read $file: $!";
+  my @lines = <$fh>;
+  close $fh;
+
+  # Index removals: { bucket => { dist => { module => 1 } } }
+  my %rm;
+  for my $t (@$to_remove) {
+    my ($bucket, $dist, $module) = @$t;
+    $rm{$bucket}{$dist}{$module} = 1;
+  }
+
+  my @out;
+  my $removed = 0;
+  my $cur_bucket = q{};
+  my $i = 0;
+  while ($i < @lines) {
+    my $line = $lines[$i];
+
+    # Top-level bucket key, e.g. "extraBuildDependencies:"
+    if ($line =~ /^(\w+):\s*$/) {
+      $cur_bucket = $1;
+      push @out, $line;
+      $i++;
+      next;
+    }
+
+    # Distribution key with an empty value (a list follows), e.g. "  Archive-Zip:"
+    if ($line =~ /^\s{2}(\S[^:]*):\s*$/) {
+      my $dist = $1;
+      # Gather the block: subsequent lines indented deeper than a key
+      # (i.e. not matching ^\s{0,2}\S), which are this dist's comments/items.
+      my @block;
+      my $j = $i + 1;
+      while ($j < @lines && $lines[$j] !~ /^\s{0,2}\S/) {
+        push @block, $lines[$j];
+        $j++;
+      }
+
+      my $removals = $rm{$cur_bucket}{$dist} // {};
+      my @kept;
+      for my $bl (@block) {
+        if ($bl =~ /^\s{4}-\s*(\S.*?)\s*$/) {
+          my $module = $1;
+          if ($removals->{$module}) { $removed++; next; }
+        }
+        push @kept, $bl;
+      }
+
+      my $has_item = grep { /^\s{4}-/ } @kept;
+      if ($has_item) {
+        push @out, $line, @kept;
+      }
+      # else: drop the whole block (key + comments) — nothing pushed.
+      $i = $j;
+      next;
+    }
+
+    push @out, $line;
+    $i++;
+  }
+
+  open my $wh, ">", $file or die "Cannot write $file: $!";
+  print {$wh} @out;
+  close $wh;
+  return $removed;
 }
 
 sub command_update ($app, @attrs) {
