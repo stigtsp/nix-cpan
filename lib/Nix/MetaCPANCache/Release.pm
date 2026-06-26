@@ -8,6 +8,7 @@ class Nix::MetaCPANCache::Release {
   use Log::Log4perl qw(:easy);
   use Cpanel::JSON::XS qw(decode_json);
   use Sort::Versions qw(versioncmp);
+  use version 0.77 ();
   use Perl6::Junction qw(any);
   use List::Util qw(uniq);
   use Module::CoreList;
@@ -177,7 +178,33 @@ class Nix::MetaCPANCache::Release {
   }
 
   method newer_than ($ver) {
-    return versioncmp($self->version, $ver) > 0;
+    my $new = $self->version;
+    return 0 unless defined $new && length $new;
+    return 0 unless defined $ver && length $ver;
+
+    # Prefer Perl's own version semantics (what CPAN uses) over Sort::Versions
+    # string-segment comparison, which mis-orders dev/underscore releases and
+    # version-scheme changes. Examples that versioncmp gets wrong:
+    #   0.10_027 (a trial/dev release) vs 0.10026  -> downgrade, not an update
+    #   8.0.1 vs 8.000001 (v-string vs float form) -> equal, not an update
+    # NB: quote the class name. This class defines `method version`, so a bare
+    # `version->parse` would be parsed as `version()->parse` (calling the method)
+    # and die. 'version'->parse forces the version.pm class-method call.
+    my ($vn, $vo);
+    my $ok = eval {
+      $vn = 'version'->parse($new);
+      $vo = 'version'->parse($ver);
+      1;
+    };
+    if ($ok && defined $vn && defined $vo) {
+      # Never bump a package deliberately pinned to a dev/trial version, and
+      # never "update" to a dev/trial release. (README: don't update pre$ versions.)
+      return 0 if $vo->is_alpha || $vn->is_alpha;
+      return $vn > $vo ? 1 : 0;
+    }
+
+    # Fallback for versions version.pm cannot parse.
+    return versioncmp($new, $ver) > 0;
   }
 
   method build_inputs {
