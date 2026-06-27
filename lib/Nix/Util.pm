@@ -8,7 +8,107 @@ use Smart::Comments -ENV;
 use MIME::Base64;
 use Log::Log4perl qw(:easy);
 
-our @EXPORT_OK = qw(sha256_hex_to_sri distro_name_to_attr license_map render_license attr_is_reserved);
+our @EXPORT_OK = qw(sha256_hex_to_sri distro_name_to_attr license_map render_license attr_is_reserved mask_nix_line brace_delta);
+
+# Blank out the contents of strings and comments on a single Nix line so that
+# brace counting (and attribute matching) is not fooled by `{`/`}`/`#` inside
+# string or comment text. $state is a hashref carrying multi-line context
+# (in_block_comment / in_dquote / in_squote) and is mutated in place across
+# successive lines. Single source of truth shared by the parser (PerlPackages)
+# and the per-derivation editor (Drv).
+sub mask_nix_line ($line, $st) {
+    my $out = "";
+    my $i = 0;
+    my $len = length($line);
+
+    while ($i < $len) {
+      my $c = substr($line, $i, 1);
+      my $two = ($i + 1 < $len) ? substr($line, $i, 2) : "";
+
+      if ($st->{in_block_comment}) {
+        if ($two eq "*/") {
+          $out .= "  ";
+          $i += 2;
+          $st->{in_block_comment} = 0;
+        } else {
+          $out .= " ";
+          $i++;
+        }
+        next;
+      }
+
+      if ($st->{in_dquote}) {
+        if ($c eq "\\" && $i + 1 < $len) {
+          $out .= "  ";
+          $i += 2;
+        } elsif ($c eq "\"") {
+          $out .= " ";
+          $i++;
+          $st->{in_dquote} = 0;
+        } else {
+          $out .= " ";
+          $i++;
+        }
+        next;
+      }
+
+      if ($st->{in_squote}) {
+        if ($two eq "''") {
+          my $next = ($i + 2 < $len) ? substr($line, $i + 2, 1) : "";
+          # In indented strings, ''${...} and '''' are escapes, not terminators.
+          if ($next eq '$' || $next eq "'") {
+            $out .= "  ";
+            $i += 2;
+          } else {
+            $out .= "  ";
+            $i += 2;
+            $st->{in_squote} = 0;
+          }
+        } else {
+          $out .= " ";
+          $i++;
+        }
+        next;
+      }
+
+      if ($two eq "/*") {
+        $out .= "  ";
+        $i += 2;
+        $st->{in_block_comment} = 1;
+        next;
+      }
+
+      if ($two eq "''") {
+        $out .= "  ";
+        $i += 2;
+        $st->{in_squote} = 1;
+        next;
+      }
+
+      if ($c eq "\"") {
+        $out .= " ";
+        $i++;
+        $st->{in_dquote} = 1;
+        next;
+      }
+
+      if ($c eq "#") {
+        $out .= " " x ($len - $i);
+        last;
+      }
+
+      $out .= $c;
+      $i++;
+    }
+
+    return $out;
+}
+
+sub brace_delta ($line) {
+    my $open_cnt = () = ($line =~ /\{/g);
+    my $close_cnt = () = ($line =~ /\}/g);
+    return $open_cnt - $close_cnt;
+}
 
 sub sha256_hex_to_sri ($hex) {
     die "sha256_hex_to_sri: requires a non-empty hex string" unless defined $hex && length $hex;

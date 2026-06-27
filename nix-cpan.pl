@@ -815,10 +815,9 @@ sub revert_nix_file ($app, $pp) {
   $pp->parse_nix_file;
 }
 
-# Build-gate a single attr. Returns ($ok, $reason). A cheap `.src` fetch is the
-# fail-fast pre-filter (catches a wrong hash before paying for a full build); the
-# full `nix-build` (with tests) is the real gate unless --fast was given. On a
-# full-build failure we mine the log for missing modules to enrich the reason.
+# Build-gate a single attr. Returns ($ok, $reason). Default is a full `nix-build`
+# (with tests); --fast verifies only the `.src` fetch/hash. On a full-build
+# failure we mine the log to distinguish a src hash mismatch from missing deps.
 sub verify_build ($app, $attr) {
   # Test hook: deterministically fail the gate for the named attrs (comma-list),
   # so the revert/report path can be validated without a naturally-failing build.
@@ -830,16 +829,25 @@ sub verify_build ($app, $attr) {
   my $root = $app->nixpkgs_root;
   die "Cannot derive nixpkgs root from nix_file\n" unless defined $root;
 
-  my ($ok_src) = run(command =>
-    ["nix-build", $root, "-A", "perlPackages.$attr.src", "--no-out-link"]);
-  return (0, "src fetch/hash failed") unless $ok_src;
-  return (1, "src ok (--fast, not built)") if $app->fast;
+  # --fast: verify only that the source fetches with the right hash (relies on
+  # downstream Hydra for the actual build).
+  if ($app->fast) {
+    my ($ok_src) = run(command =>
+      ["nix-build", $root, "-A", "perlPackages.$attr.src", "--no-out-link"]);
+    return $ok_src ? (1, "src ok (--fast, not built)") : (0, "src fetch/hash failed");
+  }
 
+  # Full gate. A wrong src hash fails early in this same build (the FOD src is
+  # realised first), so a separate `.src` pre-build would only add a second full
+  # evaluation of perl-packages.nix per candidate for no extra coverage. Mine the
+  # single build log to distinguish a hash mismatch from missing build deps.
   my ($ok, $err, $buf) = run(command =>
     ["nix-build", $root, "-A", "perlPackages.$attr", "--no-out-link"]);
   return (1, "build+tests passed") if $ok;
 
   my $log = join("", ($buf // [])->@*);
+  return (0, "src hash mismatch")
+    if $log =~ /hash mismatch|specified:\s*sha256|got:\s*sha256/i;
   my @missing = parse_missing_modules($log);
   my $reason = "build failed";
   $reason .= " (missing: " . join(", ", @missing) . ")" if @missing;

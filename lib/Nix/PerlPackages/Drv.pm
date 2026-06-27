@@ -274,31 +274,24 @@ class Nix::PerlPackages::Drv {
     $self->_set_src_or_top_attr("url", $url);
     $self->_set_src_or_top_attr($hash_attr, $hash_attr eq "sha256" ? $checksum : $hash);
 
-    my @build_inputs = $mc->build_inputs();
-    my @existing_build_inputs = $self->build_inputs();
-    push @build_inputs,
-      grep { /^pkgs\./ } @existing_build_inputs;
-    $self->set_or_add_attr_list("buildInputs", @build_inputs);
-
-    my @propagated_build_inputs = $mc->propagated_build_inputs();
-    my @existing_propagated_build_inputs = $self->propagated_build_inputs();
-    push @propagated_build_inputs,
-      grep { /^pkgs\./ } @existing_propagated_build_inputs;
-    $self->set_or_add_attr_list("propagatedBuildInputs", @propagated_build_inputs);
+    $self->_merge_inputs_from_mc($mc);
   }
 
   method update_deps_from_metacpan ($mc) {
-    my @build_inputs = $mc->build_inputs();
-    my @existing_build_inputs = $self->build_inputs();
-    push @build_inputs,
-      grep { /^pkgs\./ } @existing_build_inputs;
-    $self->set_or_add_attr_list("buildInputs", @build_inputs);
+    $self->_merge_inputs_from_mc($mc);
+  }
 
-    my @propagated_build_inputs = $mc->propagated_build_inputs();
-    my @existing_propagated_build_inputs = $self->propagated_build_inputs();
-    push @propagated_build_inputs,
-      grep { /^pkgs\./ } @existing_propagated_build_inputs;
-    $self->set_or_add_attr_list("propagatedBuildInputs", @propagated_build_inputs);
+  # Sync buildInputs/propagatedBuildInputs to MetaCPAN's resolved deps, keeping
+  # any pkgs.* entries already present in the derivation (those come from nixpkgs,
+  # not CPAN metadata, so MetaCPAN can't know about them).
+  method _merge_inputs_from_mc ($mc) {
+    for my $spec (["buildInputs", "build_inputs"],
+                  ["propagatedBuildInputs", "propagated_build_inputs"]) {
+      my ($nix_attr, $method) = @$spec;
+      my @inputs = $mc->$method();
+      push @inputs, grep { /^pkgs\./ } $self->$method();
+      $self->set_or_add_attr_list($nix_attr, @inputs);
+    }
   }
 
   method git_message {
@@ -519,98 +512,9 @@ class Nix::PerlPackages::Drv {
     return $self->_get_top_level_attr("url");
   }
 
-  method _brace_delta($line) {
-    my $open_cnt = () = ($line =~ /\{/g);
-    my $close_cnt = () = ($line =~ /\}/g);
-    return $open_cnt - $close_cnt;
-  }
+  method _brace_delta($line) { return Nix::Util::brace_delta($line); }
 
-  method _mask_nix_line($line, $st) {
-    my $out = "";
-    my $i = 0;
-    my $len = length($line);
-
-    while ($i < $len) {
-      my $c = substr($line, $i, 1);
-      my $two = ($i + 1 < $len) ? substr($line, $i, 2) : "";
-
-      if ($st->{in_block_comment}) {
-        if ($two eq "*/") {
-          $out .= "  ";
-          $i += 2;
-          $st->{in_block_comment} = 0;
-        } else {
-          $out .= " ";
-          $i++;
-        }
-        next;
-      }
-
-      if ($st->{in_dquote}) {
-        if ($c eq "\\" && $i + 1 < $len) {
-          $out .= "  ";
-          $i += 2;
-        } elsif ($c eq "\"") {
-          $out .= " ";
-          $i++;
-          $st->{in_dquote} = 0;
-        } else {
-          $out .= " ";
-          $i++;
-        }
-        next;
-      }
-
-      if ($st->{in_squote}) {
-        if ($two eq "''") {
-          my $next = ($i + 2 < $len) ? substr($line, $i + 2, 1) : "";
-          if ($next eq '$' || $next eq "'") {
-            $out .= "  ";
-            $i += 2;
-          } else {
-            $out .= "  ";
-            $i += 2;
-            $st->{in_squote} = 0;
-          }
-        } else {
-          $out .= " ";
-          $i++;
-        }
-        next;
-      }
-
-      if ($two eq "/*") {
-        $out .= "  ";
-        $i += 2;
-        $st->{in_block_comment} = 1;
-        next;
-      }
-
-      if ($two eq "''") {
-        $out .= "  ";
-        $i += 2;
-        $st->{in_squote} = 1;
-        next;
-      }
-
-      if ($c eq "\"") {
-        $out .= " ";
-        $i++;
-        $st->{in_dquote} = 1;
-        next;
-      }
-
-      if ($c eq "#") {
-        $out .= " " x ($len - $i);
-        last;
-      }
-
-      $out .= $c;
-      $i++;
-    }
-
-    return $out;
-  }
+  method _mask_nix_line($line, $st) { return Nix::Util::mask_nix_line($line, $st); }
 
 
 }

@@ -6,6 +6,7 @@ use experimental qw(class);
 class Nix::PerlPackages {
   use Log::Log4perl qw(:easy);
   use Nix::PerlPackages::Drv;
+  use Nix::Util ();
   field $nix_file          :param;
   field $nix_file_contents = undef;
   field @drvs;
@@ -141,93 +142,7 @@ class Nix::PerlPackages {
     return @drvs;
   }
 
-  method _mask_nix_line($line, $st) {
-    my $out = "";
-    my $i = 0;
-    my $len = length($line);
-
-    while ($i < $len) {
-      my $c = substr($line, $i, 1);
-      my $two = ($i + 1 < $len) ? substr($line, $i, 2) : "";
-
-      if ($st->{in_block_comment}) {
-        if ($two eq "*/") {
-          $out .= "  ";
-          $i += 2;
-          $st->{in_block_comment} = 0;
-        } else {
-          $out .= " ";
-          $i++;
-        }
-        next;
-      }
-
-      if ($st->{in_dquote}) {
-        if ($c eq "\\" && $i + 1 < $len) {
-          $out .= "  ";
-          $i += 2;
-        } elsif ($c eq "\"") {
-          $out .= " ";
-          $i++;
-          $st->{in_dquote} = 0;
-        } else {
-          $out .= " ";
-          $i++;
-        }
-        next;
-      }
-
-      if ($st->{in_squote}) {
-        if ($two eq "''") {
-          my $next = ($i + 2 < $len) ? substr($line, $i + 2, 1) : "";
-          # In indented strings, ''${...} and '''' are escapes, not terminators.
-          if ($next eq '$' || $next eq "'") {
-            $out .= "  ";
-            $i += 2;
-          } else {
-            $out .= "  ";
-            $i += 2;
-            $st->{in_squote} = 0;
-          }
-        } else {
-          $out .= " ";
-          $i++;
-        }
-        next;
-      }
-
-      if ($two eq "/*") {
-        $out .= "  ";
-        $i += 2;
-        $st->{in_block_comment} = 1;
-        next;
-      }
-
-      if ($two eq "''") {
-        $out .= "  ";
-        $i += 2;
-        $st->{in_squote} = 1;
-        next;
-      }
-
-      if ($c eq "\"") {
-        $out .= " ";
-        $i++;
-        $st->{in_dquote} = 1;
-        next;
-      }
-
-      if ($c eq "#") {
-        $out .= " " x ($len - $i);
-        last;
-      }
-
-      $out .= $c;
-      $i++;
-    }
-
-    return $out;
-  }
+  method _mask_nix_line($line, $st) { return Nix::Util::mask_nix_line($line, $st); }
 
   method all_attrnames() {
     return keys %all_attrnames;
