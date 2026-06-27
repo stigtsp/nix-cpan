@@ -199,6 +199,17 @@ Design around the loop's asymmetry — bake these into the tooling:
         dep, shown with the excluded attr); **moduleResolutionOverrides** (none
         configured). Report-only — nothing prunable on current data (correct).
         Split `preferred_build_fun` -> `build_fun_from_metadata`. t/20 extended.
+- [x] **Generate missing dependency packages** (`generate_missing`) — VERIFIED.
+      Against the real file it generates **27 stanzas** (the 23 first-level missing
+      deps + transitive ones found via BFS, e.g. GetoptYath, LogReportOptional,
+      KeywordSimple). Stanzas are correct and **build**: Heap, XMLTiny (leaf),
+      DateTimeFormatDateManip, Test2PluginIOEvents (with deps) → all exit 0.
+      Payoff: with them appended, the previously-blocked **AppMusicChordPro**
+      (6.050.7 → 6.101.0) now fully updates (HarfBuzzShaper/JavaScriptQuickJS
+      resolve; the `++ lib.optionals (!isDarwin) [ Wx ]` conditional preserved).
+      Fixed two bugs found en route (#16 --out fragment, #17 exit codes).
+      Note: generated stanzas may lack `license` when MetaCPAN has none (e.g.
+      Heap) — minor quality gap for nixpkgs review.
 - [ ] **P3 — Meta updates** folded into the same commit (Bug #4).
 - [ ] **P4 — Automation**
   - [ ] Updater-script entry point; idempotent, resumable, machine-readable report.
@@ -309,6 +320,21 @@ Design around the loop's asymmetry — bake these into the tooling:
   demand). Runtime-only missing deps are invisible at build time
   (sufficiency/minimality asymmetry), so `diagnose` only ever infers build-bucket
   errata. Add-then-rebuild-green on a real metadata-misses case is future work.
+
+- **#15 (2026-06-27) [open, dep classification] buildInputs == propagatedBuildInputs
+  after some updates.** Updating AppMusicChordPro produced identical build and
+  propagated lists. Likely the distro's metadata lists the same modules across
+  multiple phases, so `build_inputs()` (build/test/configure) and
+  `propagated_build_inputs()` (runtime) overlap fully. Pre-existing behavior (not
+  from the conditional-list or generate work). Worth a look: should a runtime dep
+  be excluded from buildInputs when it's already propagated? Low priority.
+- **#16 (2026-06-27) [FIXED] generate_missing --out wrote an unparseable
+  fragment.** It ran nixfmt on a bare set of bindings (no enclosing `{}`) →
+  nixfmt parse error, exit 255. Fixed (04f1629): --out skips nixfmt and emits an
+  explanatory header; the stanzas are already canonical.
+- **#17 (2026-06-27) [FIXED] compare/generate_missing exited 1 on success.** Both
+  lacked `return 0`, so the final `say` (returns 1) became the exit code — would
+  break a bot checking exit status. Fixed (04f1629).
 
 ## Open questions
 
