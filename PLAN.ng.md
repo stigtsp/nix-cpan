@@ -176,7 +176,8 @@ Design around the loop's asymmetry — bake these into the tooling:
   - [x] src-block-scoped editing (Bug #10) + legacy sha256 (Bug #9) — DONE, lets
         fetchpatch/legacy derivations bump (EV, NetCUPS, AlgorithmBackoff).
   - [ ] Eval-based actual-vs-metadata dep diffing.
-  - [ ] Handle complex/conditional input lists (currently skipped — Bug #2, 7 drvs).
+  - [x] Handle complex/conditional input lists (Bug #2) — `[ base ] ++ cond`
+        base now updated, conditional preserved; other shapes WARN + skip.
   - [x] Errata audit + gated prune — `nix-cpan errata` (+ `--prune`). DONE.
         Classifies extra{Build,Runtime}Dependencies vs the live cache:
         provably-redundant / load-bearing / findings. **28 redundant on the
@@ -207,14 +208,18 @@ Design around the loop's asymmetry — bake these into the tooling:
   "nixfmt --version"` → `command not found`; tool died in `has_nixfmt` on any
   write/commit. Fixed by adding `pkgs.nixfmt` to `shell.nix` (1.3.1, matches
   `~/nixpkgs`). Verified: `nixfmt --version` → 1.3.1.
-- **#2 (2026-06-26) [open, by-design] complex input lists silently skipped.**
-  `set_or_add_attr_list` skips any input list that isn't a plain `[ … ]` (e.g. a
-  `++ lib.optionals …` suffix). Census across the real file: `buildInputs`
-  simple=781 / complex=3 / none; `propagatedBuildInputs` simple=1106 / complex=4 /
-  none=801. **7 derivations** have ≥1 skipped input list (not 3). Safe (no
-  munging) but their deps won't be auto-managed. Needs explicit handling or a
-  reported skip-list in P2 — this is exactly the dependency-management surface the
-  user cares about most.
+- **#2 (2026-06-26) [FIXED for the common shape] complex input lists.**
+  `set_or_add_attr_list` used to skip any non-flat list. Now it handles
+  `[ base ] ++ <conditional rest>` (commit ea00867): updates the unconditional
+  base list, preserves the `++ lib.optionals … / ++ (with pkgs; …)` suffix
+  verbatim, excludes attrs already in the conditional (no duplicating a
+  platform-only dep), keeps pkgs.* in base. Verified on XMLLibXML + PDL (real
+  file) — conditionals preserved, edited drv still evaluates (`--dry-run` exit 0).
+  Test: t/22. Remaining un-handled shapes (left untouched, now WARNed): `with
+  perlPackages`/`with pkgs` exprs (CryptPassphraseArgon2, PDL native),
+  `[ (pkgs.x.override {…}) … ]` (SVNSimple, libapreq2), leading-conditional
+  pkgs-only (TextWrapI18N, IOInterface) — these have no flat perlPackages base to
+  manage, so manual review is correct.
 - **#3 (2026-06-26) [open] combined missing-deps commit.** nix-cpan.pl ~600-622
   emits `perlPackages: add remaining missing deps` as one commit — violates D4
   per-package `init at V` commits.
