@@ -17,6 +17,7 @@ use Nix::PerlPackages;
 use Nix::MetaCPANCache;
 use Nix::PerlPackages::Errata qw(errata errata_file);
 use Nix::PerlPackages::Errata::Audit qw(classify_extra_dependencies commented_dist_blocks);
+use Nix::PerlPackages::Errata::Suggest qw(suggest_from_log add_errata_entries);
 use Nix::Util qw(sha256_hex_to_sri render_license);
 use Text::Diff ();
 use IPC::Cmd qw(run);
@@ -56,6 +57,11 @@ subcommand generate_missing => "Generate missing dependency stanzas for update c
 
 subcommand errata => "Audit errata extra-dependencies against the MetaCPAN cache" => sub {
   option bool => "prune" => "Remove provably-redundant extra-dependency entries from Errata.yaml" => 0;
+};
+
+subcommand diagnose => "Build a derivation and suggest errata for missing build deps" => sub {
+  option bool => "apply" => "Write suggested errata additions into Errata.yaml" => 0;
+  option file => "log"   => "Parse an existing build log instead of building" => undef;
 };
 
 
@@ -638,6 +644,93 @@ sub prune_errata_entries ($app, $to_remove) {
   print {$wh} @out;
   close $wh;
   return $removed;
+}
+
+sub nixpkgs_root ($app) {
+  my $f = $app->nix_file;
+  my $suffix = "/pkgs/top-level/perl-packages.nix";
+  if (length($f) >= length($suffix) && substr($f, -length($suffix)) eq $suffix) {
+    return substr($f, 0, length($f) - length($suffix));
+  }
+  return;
+}
+
+sub command_diagnose ($app, @attrs) {
+  $app->init_logging;
+  my $mcc = Nix::MetaCPANCache->new;
+  die "MetaCPAN cache does not exist, download it with:\n    $0 refresh\n\n"
+    unless $mcc->db_file_exists;
+
+  my $log_opt = $app->can("log") ? $app->log : undef;
+  my $pp = Nix::PerlPackages->new( nix_file => $app->nix_file );
+
+  die "diagnose requires at least one attr (or --log with one attr)\n" unless @attrs;
+
+  my @all_suggestions;
+  for my $attr (@attrs) {
+    my $drv = $pp->drv_by_attrname($attr);
+    unless ($drv) { WARN("Skipping $attr: not found in perlPackages"); next; }
+    my $dist = $drv->distribution_name;
+    unless (defined $dist && length $dist) { WARN("Skipping $attr: no distribution name"); next; }
+
+    my $log;
+    if (defined $log_opt) {
+      open my $fh, "<", $log_opt or die "Cannot read log $log_opt: $!";
+      local $/; $log = <$fh>; close $fh;
+      INFO("Parsing existing log for $attr ($dist)");
+    } else {
+      my $root = $app->nixpkgs_root;
+      die "Cannot derive nixpkgs root from nix_file (expected .../pkgs/top-level/perl-packages.nix)\n"
+        unless defined $root;
+      INFO("Building perlPackages.$attr to observe missing build deps ...");
+      my ($ok, $err, $buf) = run(command =>
+        ["nix-build", $root, "-A", "perlPackages.$attr", "--no-out-link"]);
+      $log = join("", ($buf // [])->@*);
+      if ($ok) {
+        say "perlPackages.$attr ($dist): builds OK — no missing build deps.";
+        next;
+      }
+      INFO("Build failed for $attr; analysing log");
+    }
+
+    my $res = suggest_from_log($mcc, $log, $dist);
+    my @sugg  = $res->{suggestions}->@*;
+    my @stale = $res->{stale}->@*;
+    my @find  = $res->{findings}->@*;
+
+    if (!@sugg && !@stale && !@find) {
+      say "perlPackages.$attr ($dist): build failed but no missing-module signature found (different failure).";
+      next;
+    }
+
+    say "perlPackages.$attr ($dist):";
+    for my $s (@sugg) {
+      say "  SUGGEST  $s->{bucket}: $dist += $s->{module}  (attr $s->{attr})  [metadata misses it]";
+    }
+    for my $s (@stale) {
+      say "  STALE    $s->{module} (attr $s->{attr}) is in MetaCPAN metadata but missing from the";
+      say "           derivation — regenerate with: $0 update --deps_only --inplace $attr   (no errata needed)";
+    }
+    for my $f (@find) {
+      if ($f->{type} eq "core_module") {
+        say "  note     $f->{module} is a core module (not an errata dep)";
+      } elsif ($f->{type} eq "unresolvable_module") {
+        say "  WARN     $f->{module} is missing but unresolvable — likely needs a new package, not errata";
+      }
+    }
+    push @all_suggestions, @sugg;
+  }
+
+  if ($app->apply && @all_suggestions) {
+    my $added = add_errata_entries(errata_file(), \@all_suggestions);
+    say "";
+    say "Applied $added errata addition" . ($added == 1 ? "" : "s") . " to " . errata_file() . ".";
+    say "Re-run: $0 update --deps_only --inplace <attr>   to apply the new deps, then rebuild.";
+  } elsif (@all_suggestions) {
+    say "";
+    say "Re-run with --apply to write these into Errata.yaml.";
+  }
+  return 0;
 }
 
 sub command_update ($app, @attrs) {
