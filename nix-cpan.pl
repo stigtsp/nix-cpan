@@ -22,7 +22,7 @@ use Nix::PerlPackages::Errata::Audit qw(
   classify_ignore_modules
   commented_dist_blocks
 );
-use Nix::PerlPackages::Errata::Suggest qw(suggest_from_log add_errata_entries);
+use Nix::PerlPackages::Errata::Suggest qw(suggest_from_log add_errata_entries parse_missing_modules);
 use Nix::Util qw(sha256_hex_to_sri render_license);
 use Text::Diff ();
 use IPC::Cmd qw(run);
@@ -67,6 +67,14 @@ subcommand errata => "Audit errata extra-dependencies against the MetaCPAN cache
 subcommand diagnose => "Build a derivation and suggest errata for missing build deps" => sub {
   option bool => "apply" => "Write suggested errata additions into Errata.yaml" => 0;
   option file => "log"   => "Parse an existing build log instead of building" => undef;
+};
+
+subcommand auto => "Automated build-gated updater: bump, verify, commit per package" => sub {
+  option string => "risk"   => "Which candidates: safe (no dep change) | moderate (<=6) | all" => "safe";
+  option int    => "max"    => "Limit number of packages processed (0 = no limit)" => 0;
+  option bool   => "commit" => "Commit verified bumps (omit for dry-run: verify then revert)" => 0;
+  option bool   => "fast"   => "Verify hash via .src only; skip the full build (rely on downstream)" => 0;
+  option file   => "report_json" => "Write a machine-readable JSON report to this path" => undef;
 };
 
 
@@ -783,6 +791,185 @@ sub command_diagnose ($app, @attrs) {
     say "Re-run with --apply to write these into Errata.yaml.";
   }
   return 0;
+}
+
+# Count of dependency add/removes between the derivation and MetaCPAN (the same
+# risk notion as `compare --report`). Can die if a dep is unresolvable.
+sub dep_delta ($app, $drv, $mc) {
+  my $delta = 0;
+  for my $k (qw(build_inputs propagated_build_inputs)) {
+    my @cur = grep { ! /^pkgs\./ } $drv->$k;
+    my @new = $mc->$k;
+    my $diff = Array::Diff->diff(\@cur, \@new);
+    $delta += scalar(grep { $_ } @{$diff->added}) + scalar(grep { $_ } @{$diff->deleted});
+  }
+  return $delta;
+}
+
+sub revert_nix_file ($app, $pp) {
+  my $file = $app->nix_file;
+  my $dir = dirname($file);
+  my $rel = basename($file);
+  my ($ok, $err, $buf) = run(command => ["git", "-C", $dir, "checkout", "--", $rel]);
+  die "revert (git checkout) failed: $err: " . join("", ($buf // [])->@*) unless $ok;
+  $pp->parse_nix_file;
+}
+
+# Build-gate a single attr. Returns ($ok, $reason). A cheap `.src` fetch is the
+# fail-fast pre-filter (catches a wrong hash before paying for a full build); the
+# full `nix-build` (with tests) is the real gate unless --fast was given. On a
+# full-build failure we mine the log for missing modules to enrich the reason.
+sub verify_build ($app, $attr) {
+  # Test hook: deterministically fail the gate for the named attrs (comma-list),
+  # so the revert/report path can be validated without a naturally-failing build.
+  if (my $fail = $ENV{NIX_CPAN_FORCE_BUILD_FAIL}) {
+    return (0, "forced build failure (NIX_CPAN_FORCE_BUILD_FAIL)")
+      if $attr eq any(split /,/, $fail);
+  }
+
+  my $root = $app->nixpkgs_root;
+  die "Cannot derive nixpkgs root from nix_file\n" unless defined $root;
+
+  my ($ok_src) = run(command =>
+    ["nix-build", $root, "-A", "perlPackages.$attr.src", "--no-out-link"]);
+  return (0, "src fetch/hash failed") unless $ok_src;
+  return (1, "src ok (--fast, not built)") if $app->fast;
+
+  my ($ok, $err, $buf) = run(command =>
+    ["nix-build", $root, "-A", "perlPackages.$attr", "--no-out-link"]);
+  return (1, "build+tests passed") if $ok;
+
+  my $log = join("", ($buf // [])->@*);
+  my @missing = parse_missing_modules($log);
+  my $reason = "build failed";
+  $reason .= " (missing: " . join(", ", @missing) . ")" if @missing;
+  return (0, $reason);
+}
+
+sub command_auto ($app, @attrs) {
+  $app->init_logging;
+  my $metacpan = Nix::MetaCPANCache->new;
+  die "MetaCPAN cache does not exist, download it with:\n    $0 refresh\n\n"
+    unless $metacpan->db_file_exists;
+  die "auto requires nix_file at .../pkgs/top-level/perl-packages.nix\n"
+    unless defined $app->nixpkgs_root;
+
+  my $risk = $app->risk // "safe";
+  die "--risk must be one of: safe, moderate, all\n"
+    unless $risk =~ /^(?:safe|moderate|all)$/;
+
+  $app->git_sanity if $app->commit;
+
+  my $pp = Nix::PerlPackages->new( nix_file => $app->nix_file );
+  my %known = map { $_ => 1 } $pp->all_attrnames;
+  my %scanned = $app->scan_top_level_attrnames;
+  @known{keys %scanned} = values %scanned;
+
+  my @drvs = $pp->drvs;
+  if (@attrs) {
+    @drvs = grep { $_->attrname eq any(@attrs) } @drvs;
+  }
+
+  my (@updated, @failed, @skipped);
+
+  foreach my $drv (@drvs) {
+    my $attr = $drv->attrname;
+    my $name = $drv->distribution_name;
+    next unless defined $name && length $name;
+    my $version = $drv->version;
+    next unless defined $version && length $version;
+
+    my $mc = $metacpan->get_by(distribution => $name);
+    next unless $mc;
+    next unless $mc->newer_than($version);
+
+    # Risk bucket by dependency delta (same notion as `compare --report`).
+    my $delta = eval { $app->dep_delta($drv, $mc) };
+    if ($@) {
+      push @skipped, { attr => $attr, reason => "dependency resolution failed (needs errata/missing)" };
+      next;
+    }
+    if ($risk eq "safe") { next unless $delta == 0; }
+    elsif ($risk eq "moderate") { next unless $delta <= 6; }
+
+    last if $app->max && (@updated + @failed) >= $app->max;
+
+    # Compute the bump in memory.
+    my $d = eval { $app->update_attr($metacpan, $pp, $attr) };
+    if ($@) { push @skipped, { attr => $attr, reason => "update_attr: $@" }; next; }
+    next unless $d && $d->dirty;
+
+    my $old = $d->get_attr("version", $d->orig_part);
+    my $new = $d->version;
+
+    # v1: only candidates whose deps are all already present (no new packages).
+    eval { $app->validate_drv_dependency_attrs($d, \%known, {}) };
+    if ($@) {
+      push @skipped, { attr => $attr, old => $old, new => $new,
+                       reason => "needs missing dependency packages (run generate_missing)" };
+      next;
+    }
+
+    # Apply (unformatted but valid), then build-gate.
+    $pp->update_inplace($d, parse_after => 1);
+    my ($ok, $reason) = $app->verify_build($attr);
+
+    if (!$ok) {
+      $app->revert_nix_file($pp);
+      push @failed, { attr => $attr, old => $old, new => $new, reason => $reason };
+      WARN("FAIL  $attr $old -> $new: $reason");
+      next;
+    }
+
+    if ($app->commit) {
+      $app->format_nix_file($pp);
+      if ($app->git_file_dirty) {
+        $app->git_cmd("commit", "--no-gpg-sign", "-m", $d->git_message);
+        push @updated, { attr => $attr, old => $old, new => $new, committed => 1, reason => $reason };
+        INFO("OK    $attr $old -> $new (committed)");
+      } else {
+        $app->revert_nix_file($pp);
+        push @skipped, { attr => $attr, reason => "no net change after format" };
+      }
+    } else {
+      # dry-run: revert so the tree stays clean for the next candidate.
+      $app->revert_nix_file($pp);
+      push @updated, { attr => $attr, old => $old, new => $new, committed => 0, reason => $reason };
+      INFO("OK    $attr $old -> $new (verified, dry-run)");
+    }
+  }
+
+  my $report = {
+    risk      => $risk,
+    committed => ($app->commit ? 1 : 0),
+    fast      => ($app->fast ? 1 : 0),
+    updated   => \@updated,
+    failed    => \@failed,
+    skipped   => \@skipped,
+  };
+
+  printf("auto (risk=%s, %s%s): %d verified, %d failed, %d skipped\n",
+         $risk, ($app->commit ? "commit" : "dry-run"), ($app->fast ? ", fast" : ""),
+         scalar(@updated), scalar(@failed), scalar(@skipped));
+  for my $u (@updated) {
+    printf("  OK    %-32s %s -> %s%s\n", $u->{attr}, $u->{old} // "?", $u->{new} // "?",
+           $u->{committed} ? " (committed)" : "");
+  }
+  for my $f (@failed) {
+    printf("  FAIL  %-32s %s -> %s : %s\n", $f->{attr}, $f->{old} // "?", $f->{new} // "?", $f->{reason});
+  }
+  for my $s (@skipped) {
+    printf("  SKIP  %-32s %s\n", $s->{attr}, $s->{reason});
+  }
+
+  if (defined $app->report_json) {
+    open my $jh, ">", $app->report_json or die "Cannot write ".$app->report_json.": $!";
+    print {$jh} encode_json($report) . "\n";
+    close $jh;
+    say "Wrote JSON report to ".$app->report_json;
+  }
+
+  return (@failed ? 1 : 0);
 }
 
 sub command_update ($app, @attrs) {
