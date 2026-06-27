@@ -106,4 +106,17 @@ my $rpt = "$tmpdir/report.json";
   is(porcelain(), "", "tree clean after commit");
 }
 
+# --- 4) refuses on a dirty file (auto reverts via git checkout -> data loss) ---
+{
+  open my $a, ">>", $nix_file or die $!;
+  print {$a} "\n# precious uncommitted edit\n";
+  close $a;
+  my $r = run_nix_cpan($cache_home, {}, "auto", "Root", "--risk", "safe",
+                       "--nix-file", $nix_file);
+  ok(!$r->{ok}, "auto refuses to run on a dirty file");
+  like($r->{out} . ($r->{err} // ""), qr/uncommitted changes/, "explains why it refused");
+  like(read_file($nix_file), qr/precious uncommitted edit/,
+       "the user's uncommitted edit is preserved (not reverted)");
+}
+
 done_testing();

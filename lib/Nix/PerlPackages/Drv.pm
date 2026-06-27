@@ -267,24 +267,12 @@ class Nix::PerlPackages::Drv {
 
     $self->_set_attr_prefer_top_level("version", $version);
     # url/hash live inside the src fetcher block; edit them there so we never
-    # touch a url/hash belonging to a fetchpatch in `patches = [ ... ]`. Fall
-    # back to top-level for forms (and test fixtures) without a src block.
+    # touch a url/hash belonging to a fetchpatch in `patches = [ ... ]`. The
+    # setter mirrors the src_url/src_hash_attr read fallback (src block, then
+    # top-level) so reader and writer can never disagree.
     my $hash_attr = $self->src_hash_attr // "hash";
-    if ($self->_has_src_block) {
-      $self->_set_src_attr("url", $url);
-      if ($hash_attr eq "sha256") {
-        $self->_set_src_attr("sha256", $checksum); # legacy hex form
-      } else {
-        $self->_set_src_attr("hash", $hash);
-      }
-    } else {
-      $self->_set_attr_prefer_top_level("url", $url);
-      if ($hash_attr eq "sha256") {
-        $self->_set_attr_prefer_top_level("sha256", $checksum);
-      } else {
-        $self->_set_attr_prefer_top_level("hash", $hash);
-      }
-    }
+    $self->_set_src_or_top_attr("url", $url);
+    $self->_set_src_or_top_attr($hash_attr, $hash_attr eq "sha256" ? $checksum : $hash);
 
     my @build_inputs = $mc->build_inputs();
     my @existing_build_inputs = $self->build_inputs();
@@ -472,10 +460,13 @@ class Nix::PerlPackages::Drv {
     return undef;
   }
 
+  # Set $attr within the src fetcher block. Returns 1 if it edited a line, 0 if
+  # the src block (or the attr within it) was not found — the caller decides
+  # whether to fall back. Never dies, so a graceful fallback is possible.
   method _set_src_attr($attr, $val) {
     my @lines = split /\n/, $part, -1;
     my ($s, $e) = $self->_src_span_lines(\@lines);
-    die "Unable to locate src block to set $attr" unless defined $s;
+    return 0 unless defined $s;
     my $updated = 0;
     for my $i ($s .. $e) {
       if (!$updated && $lines[$i] =~ /^(\s*\Q$attr\E\s*=\s*)(["'])(.*)\2;(\s*)$/) {
@@ -483,9 +474,23 @@ class Nix::PerlPackages::Drv {
         $updated = 1;
       }
     }
-    die "Unable to update src $attr" unless $updated;
+    return 0 unless $updated;
     $part = join("\n", @lines);
     return 1;
+  }
+
+  # Set url/hash preferring the src fetcher block, falling back to a top-level
+  # attribute. This mirrors the read fallback in src_url/src_hash_attr so the
+  # reader and writer always agree on where the value lives. Dies only if the
+  # attribute is present in neither place.
+  method _set_src_or_top_attr($attr, $val) {
+    return if $self->_set_src_attr($attr, $val);
+    my $top = $self->_get_top_level_attr($attr);
+    if (defined $top) {
+      $self->_set_top_level_attr($attr, $top, $val);
+      return;
+    }
+    die "Unable to update $attr: not found in src block or at top level";
   }
 
   method _has_src_block {

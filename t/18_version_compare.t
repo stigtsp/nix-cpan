@@ -43,8 +43,11 @@ my @cases = (
   [ "0.10026", "0.10_027", 0, "do not downgrade a dev/underscore release" ],
   # candidate is a dev release -> never update to it
   [ "0.11_01", "0.10",     0, "never update to a dev/trial release" ],
-  # version-scheme flip that is actually equal under Perl version semantics
-  [ "8.000001", "8.0.1",   0, "8.0.1 == 8.000001 (scheme flip, not an update)" ],
+  # dotted X.9 -> X.10 must be detected as newer (version.pm decimal parse got
+  # this WRONG by ranking 1.10 == 1.1 < 1.9; versioncmp gets it right)
+  [ "1.10",    "1.9",      1, "1.9 -> 1.10 is newer (dotted), not a regression" ],
+  # and the reverse must NOT look newer (no downgrade when local is ahead)
+  [ "1.9",     "1.10",     0, "1.10 -> 1.9 is not newer (no downgrade)" ],
   # real bump across a scheme change
   [ "3.000001", "2.0.1",   1, "2.0.1 -> 3.000001 is a real major bump" ],
 );

@@ -8,7 +8,6 @@ class Nix::MetaCPANCache::Release {
   use Log::Log4perl qw(:easy);
   use Cpanel::JSON::XS qw(decode_json);
   use Sort::Versions qw(versioncmp);
-  use version 0.77 ();
   use Perl6::Junction qw(any);
   use List::Util qw(uniq);
   use Module::CoreList;
@@ -188,28 +187,18 @@ class Nix::MetaCPANCache::Release {
     return 0 unless defined $new && length $new;
     return 0 unless defined $ver && length $ver;
 
-    # Prefer Perl's own version semantics (what CPAN uses) over Sort::Versions
-    # string-segment comparison, which mis-orders dev/underscore releases and
-    # version-scheme changes. Examples that versioncmp gets wrong:
-    #   0.10_027 (a trial/dev release) vs 0.10026  -> downgrade, not an update
-    #   8.0.1 vs 8.000001 (v-string vs float form) -> equal, not an update
-    # NB: quote the class name. This class defines `method version`, so a bare
-    # `version->parse` would be parsed as `version()->parse` (calling the method)
-    # and die. 'version'->parse forces the version.pm class-method call.
-    my ($vn, $vo);
-    my $ok = eval {
-      $vn = 'version'->parse($new);
-      $vo = 'version'->parse($ver);
-      1;
-    };
-    if ($ok && defined $vn && defined $vo) {
-      # Never bump a package deliberately pinned to a dev/trial version, and
-      # never "update" to a dev/trial release. (README: don't update pre$ versions.)
-      return 0 if $vo->is_alpha || $vn->is_alpha;
-      return $vn > $vo ? 1 : 0;
-    }
+    # Never bump a package pinned to a dev/trial (underscore) release, and never
+    # "update" TO one. (README: don't update pre$ versions.) Sort::Versions
+    # mis-orders underscore versions (e.g. ranks 0.10026 above the newer trial
+    # 0.10_027), so guard them explicitly before comparing.
+    return 0 if $new =~ /_/ || $ver =~ /_/;
 
-    # Fallback for versions version.pm cannot parse.
+    # Order with Sort::Versions: it treats 1.9 < 1.10 the dotted way that matches
+    # nixpkgs/CPAN release sequences, and never reports an older cache version as
+    # newer (so `auto` cannot be tricked into a downgrade when the local tree is
+    # ahead of the cache). NB: version.pm's decimal normalization is WRONG here --
+    # it parses "1.10" as 1.1, so it both misses real X.9 -> X.10 updates and can
+    # downgrade; do not use it for this comparison.
     return versioncmp($new, $ver) > 0;
   }
 

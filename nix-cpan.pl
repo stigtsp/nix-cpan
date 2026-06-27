@@ -858,6 +858,15 @@ sub command_auto ($app, @attrs) {
   die "--risk must be one of: safe, moderate, all\n"
     unless $risk =~ /^(?:safe|moderate|all)$/;
 
+  # auto verifies each candidate by editing the file in place and then reverting
+  # via `git checkout -- <file>` (on a failed gate, or after every candidate in
+  # dry-run). That revert would discard pre-existing uncommitted edits, so refuse
+  # to run on a dirty file regardless of --commit. (git_sanity also enforces this
+  # for --commit, plus the branch check.)
+  if ($app->git_file_dirty) {
+    die "auto: " . $app->nix_file . " has uncommitted changes.\n"
+      . "Commit or stash them first — auto reverts via 'git checkout' and would discard them.\n";
+  }
   $app->git_sanity if $app->commit;
 
   my $pp = Nix::PerlPackages->new( nix_file => $app->nix_file );
@@ -910,8 +919,11 @@ sub command_auto ($app, @attrs) {
       next;
     }
 
-    # Apply (unformatted but valid), then build-gate.
-    $pp->update_inplace($d, parse_after => 1);
+    # Apply (unformatted but valid), then build-gate. No need to re-parse here:
+    # verify_build shells out to nix-build on disk, and each outcome re-parses
+    # anyway (revert_nix_file / format_nix_file), so parse_after => 0 avoids a
+    # wasted full-file parse per candidate.
+    $pp->update_inplace($d, parse_after => 0);
     my ($ok, $reason) = $app->verify_build($attr);
 
     if (!$ok) {
