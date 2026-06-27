@@ -361,6 +361,47 @@ Design around the loop's asymmetry — bake these into the tooling:
   lacked `return 0`, so the final `say` (returns 1) became the exit code — would
   break a bot checking exit status. Fixed (04f1629).
 
+## Code review (2026-06-27, high-effort workflow over 1412c00..HEAD)
+
+22 findings survived verification. Triage:
+
+**Fixed (commit df77ae4):**
+- **CR-1 [CRITICAL] newer_than regression** — version.pm ranked "1.10" as 1.1 <
+  1.9, silently skipping X.9→X.10 updates and risking downgrades when the local
+  tree was ahead of the cache. Reverted to Sort::Versions ordering + explicit
+  underscore/dev guard. (This supersedes the version.pm approach in Bug #7; the
+  dev-guard still satisfies #7's real requirement.)
+- **CR-0 [CRITICAL] auto dry-run data loss** — default (dry-run) auto reverted via
+  `git checkout` but the dirty guard only ran with --commit → a preview on a file
+  with uncommitted edits wiped them. auto now refuses on a dirty file always.
+- **CR-8/11 src reader/writer asymmetry** — writer now mirrors the reader's
+  src-block→top-level fallback (`_set_src_or_top_attr`); `_set_src_attr` returns 0
+  instead of dying. Note: real nixpkgs is uniformly canonical (0 single-line src,
+  0 top-level hash), so these never fired in practice — defensive hardening.
+- **CR perf** — auto used `update_inplace(parse_after => 1)`; every path re-parses
+  anyway, so → `parse_after => 0` (halves per-candidate parsing).
+
+**Accepted by design (documented, not changed):**
+- **CR-3 conditional base drops hand-added deps** — `[ base ] ++ cond` regenerates
+  the base from metadata + pkgs.* (dropping manual non-pkgs base deps). This is
+  IDENTICAL to how simple lists already behave: metadata is authoritative for deps;
+  manual deps belong in errata (which IS preserved). `auto`'s build gate catches
+  any resulting missing dep. Constraint, not a bug.
+- **CR-4/6 dev-pinned never updated** — intended (README: don't update pre$
+  versions); now enforced via the underscore guard.
+- **CR-10 url/hash in exotic layouts WARN-skip** — the old whole-part scan could
+  edit the WRONG url (a fetchpatch's); src-scoping is a safety improvement.
+  Skipping an unrecognised layout is safer than mis-editing.
+- **CR-9 the 18 errata prunes** — redundancy is computed from the real resolver
+  (`dependency()`), so a pruned entry is provably output-identical on the current
+  cache; commented hedges are retained; the prune commit is git-reversible.
+
+**Deferred (perf/cleanup backlog):**
+- CR verify_build double `nix-build` eval (.src then full) — fail-fast tradeoff;
+  could mine one full-build log for the hash-mismatch signature instead.
+- DRY duplications incl. the `_mask_nix_line` copy in PerlPackages.pm + Drv.pm
+  (already noted in CLAUDE.md) and shared dep-list merge logic.
+
 ## Open questions
 
 - Region-only nixfmt: does it reproduce whole-file nixfmt byte-for-byte? (D2 risk)
