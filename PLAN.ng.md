@@ -191,10 +191,14 @@ Design around the loop's asymmetry — bake these into the tooling:
         extraBuildDependencies errata** (`--apply` writes it surgically);
         **metadata-has-it → STALE, recommend `update --deps_only`** (not errata);
         core/unresolvable → findings. Module `Errata/Suggest.pm` + t/21.
-  - [ ] Audit the other 3 buckets: `moduleResolutionOverrides` (redundant if
-        `resolve_module` finds it without the override), `buildFunctionOverrides`
-        (redundant if `preferred_build_fun` agrees), `ignoreModule` (hardest —
-        suppresses a die).
+  - [x] Audit the other 3 buckets — DONE (commit cd7f339). `errata` now reports:
+        **buildFunctionOverrides** (redundant iff `build_fun_from_metadata` ==
+        forced; Dist-Build is load-bearing — metadata undecided);
+        **ignoreModule** (redundant iff core, since dependency() checks ignore
+        before the core filter; all 9 load-bearing — each excludes a resolvable
+        dep, shown with the excluded attr); **moduleResolutionOverrides** (none
+        configured). Report-only — nothing prunable on current data (correct).
+        Split `preferred_build_fun` -> `build_fun_from_metadata`. t/20 extended.
 - [ ] **P3 — Meta updates** folded into the same commit (Bug #4).
 - [ ] **P4 — Automation**
   - [ ] Updater-script entry point; idempotent, resumable, machine-readable report.
