@@ -211,9 +211,19 @@ Design around the loop's asymmetry — bake these into the tooling:
       Note: generated stanzas may lack `license` when MetaCPAN has none (e.g.
       Heap) — minor quality gap for nixpkgs review.
 - [ ] **P3 — Meta updates** folded into the same commit (Bug #4).
-- [ ] **P4 — Automation**
-  - [ ] Updater-script entry point; idempotent, resumable, machine-readable report.
-  - [ ] Per-package `init at V` commits for new deps (D4 gap).
+- [x] **P4 — Automation** — `nix-cpan auto` DONE (commit bd6a0b3).
+  - [x] Updater entry point: risk-filtered, **build-gated** (full build default;
+        `.src` fail-fast pre-filter; `--fast` = src-only opt-in), revert-on-fail
+        via `git checkout` (broken bumps never committed), per-package commits,
+        dry-run default, machine-readable JSON report (failures carry
+        {attr,old,new,reason} for future quarantine), exit-code aware.
+        Idempotent via git (a landed bump is no longer a candidate next run).
+        v1 scope: deps-all-present candidates only (no --missing) for atomic revert.
+        Validated on real ~/nixpkgs (green→commit, forced-fail→revert) + t/23.
+  - [ ] **Deferred** (future): failure quarantine (skip-list keyed by attr+version,
+        from the JSON report) so the bot doesn't rebuild known-bad bumps each run;
+        per-package `init at V` commits for new deps (D4 gap); moderate/high at
+        scale once #15 (build==propagated deps) is confirmed metadata-real.
 
 ## Bug / finding log
 
