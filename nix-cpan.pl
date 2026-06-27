@@ -16,7 +16,12 @@ use Cpanel::JSON::XS qw(encode_json);
 use Nix::PerlPackages;
 use Nix::MetaCPANCache;
 use Nix::PerlPackages::Errata qw(errata errata_file);
-use Nix::PerlPackages::Errata::Audit qw(classify_extra_dependencies commented_dist_blocks);
+use Nix::PerlPackages::Errata::Audit qw(
+  classify_extra_dependencies
+  classify_build_function_overrides
+  classify_ignore_modules
+  commented_dist_blocks
+);
 use Nix::PerlPackages::Errata::Suggest qw(suggest_from_log add_errata_entries);
 use Nix::Util qw(sha256_hex_to_sri render_license);
 use Text::Diff ();
@@ -548,6 +553,46 @@ sub command_errata ($app) {
          $total_redundant, $total_prunable, $hedges, $total_load, scalar $result->{findings}->@*);
   say "* = commented hedge: redundant in this cache snapshot but deliberately kept"
     . " (comment signals intent, e.g. snapshot unreliability)." if $hedges;
+
+  # --- buildFunctionOverrides ---
+  my $bfo = classify_build_function_overrides($mcc, $cfg);
+  if (($bfo->{redundant}->@* + $bfo->{load_bearing}->@* + $bfo->{findings}->@*)) {
+    say "";
+    say "buildFunctionOverrides: "
+      . scalar($bfo->{redundant}->@*) . " redundant, "
+      . scalar($bfo->{load_bearing}->@*) . " load-bearing";
+    for my $e ($bfo->{redundant}->@*) {
+      say "  REDUNDANT  $e->{dist}: forced=$e->{forced} but metadata already yields $e->{metadata}";
+    }
+    for my $e ($bfo->{load_bearing}->@*) {
+      say "  keep       $e->{dist}: forced=$e->{forced} (metadata: " . ($e->{metadata} // "undecided") . ")";
+    }
+    for my $f ($bfo->{findings}->@*) {
+      say "  finding    $f->{type}: $f->{dist}";
+    }
+  }
+
+  # --- ignoreModule ---
+  my $ign = classify_ignore_modules($mcc, $cfg);
+  if (($ign->{redundant}->@* + $ign->{load_bearing}->@*)) {
+    say "";
+    say "ignoreModule: "
+      . scalar($ign->{redundant}->@*) . " redundant, "
+      . scalar($ign->{load_bearing}->@*) . " load-bearing";
+    for my $e ($ign->{redundant}->@*) {
+      say "  REDUNDANT  $e->{module} — $e->{reason}";
+    }
+    for my $e ($ign->{load_bearing}->@*) {
+      say "  keep       $e->{module} — $e->{class}" . (defined $e->{attr} ? " ($e->{attr})" : "");
+    }
+  }
+
+  # --- moduleResolutionOverrides ---
+  if (!($cfg->{moduleResolutionOverrides} && ref($cfg->{moduleResolutionOverrides}) eq "HASH"
+        && keys $cfg->{moduleResolutionOverrides}->%*)) {
+    say "";
+    say "moduleResolutionOverrides: (none configured)";
+  }
 
   if ($app->prune) {
     if ($total_prunable == 0) {

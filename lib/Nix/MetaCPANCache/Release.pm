@@ -79,7 +79,13 @@ class Nix::MetaCPANCache::Release {
         }
       }
     }
+    return $self->build_fun_from_metadata;
+  }
 
+  # The build-function decision from MetaCPAN metadata ALONE (no errata
+  # override). Used by the errata audit to decide whether a buildFunctionOverrides
+  # entry is redundant (metadata already yields the forced value).
+  method build_fun_from_metadata {
     my $meta = $data->{metadata};
     return unless $meta && ref($meta) eq "HASH";
 

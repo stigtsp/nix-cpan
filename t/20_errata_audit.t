@@ -65,4 +65,54 @@ my $commented = commented_dist_blocks($yaml);
 ok($commented->{extraRuntimeDependencies}{WidgetCore}, "commented block detected as hedge");
 ok(!$commented->{extraRuntimeDependencies}{Lonely}, "uncommented block not a hedge");
 
+# --- buildFunctionOverrides + ignoreModule classifiers (own mock cache) ---
+Nix::PerlPackages::Errata::Audit->import(
+  qw(classify_build_function_overrides classify_ignore_modules));
+{
+  my $td2 = tempdir(CLEANUP => 1);
+  my $m2 = Nix::MetaCPANCache->new(
+    cache_file => "$td2/dl.jsonl.gz", db_file => "$td2/cache.db");
+  my $sha2 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+  my sub rel2 ($name,$dist,$mod,%extra) {
+    +{ name=>$name, distribution=>$dist, main_module=>$mod, version=>"1.0",
+       version_numified=>1, checksum_sha256=>$sha2,
+       download_url=>"https://cpan.metacpan.org/authors/id/X/XX/XXX/$name.tar.gz",
+       dependency=>[], provides=>{ $mod => { file=>"x.pm" } }, %extra };
+  }
+  $m2->write_releases([
+    # metadata configure-requires Module::Build -> build_fun_from_metadata = Module
+    rel2("ModBuilt-1.0","ModBuilt","ModBuilt",
+         metadata => { prereqs => { configure => { requires => { "Module::Build" => "0" } } } }),
+    # no metadata -> build_fun_from_metadata = undef
+    rel2("Undecided-1.0","Undecided","Undecided"),
+    # a resolvable module for the ignore test
+    rel2("Excludable-1.0","Excludable","Excludable"),
+  ]);
+
+  my $cfg2 = {
+    buildFunctionOverrides => {
+      ModBuilt  => "Module",   # metadata already yields Module -> redundant
+      Undecided => "Module",   # metadata undecided -> load-bearing
+    },
+    ignoreModule => [
+      "Carp",          # core -> redundant (core filter catches it)
+      "Excludable",    # resolves -> load-bearing (excludes a real dep)
+      "No::Such::Mod", # unresolvable -> load-bearing (prevents die)
+    ],
+  };
+
+  my $bfo = classify_build_function_overrides($m2, $cfg2);
+  is_deeply([map { $_->{dist} } $bfo->{redundant}->@*], ["ModBuilt"],
+            "buildFunctionOverrides: metadata-agreeing override is redundant");
+  is_deeply([map { $_->{dist} } $bfo->{load_bearing}->@*], ["Undecided"],
+            "buildFunctionOverrides: metadata-undecided override is load-bearing");
+
+  my $ign = classify_ignore_modules($m2, $cfg2);
+  is_deeply([map { $_->{module} } $ign->{redundant}->@*], ["Carp"],
+            "ignoreModule: core module is redundant");
+  my %lb = map { $_->{module} => $_->{class} } $ign->{load_bearing}->@*;
+  is($lb{"Excludable"}, "excludes resolvable dep", "ignoreModule: resolvable is load-bearing");
+  is($lb{"No::Such::Mod"}, "prevents unresolvable-die", "ignoreModule: unresolvable is load-bearing");
+}
+
 done_testing();
