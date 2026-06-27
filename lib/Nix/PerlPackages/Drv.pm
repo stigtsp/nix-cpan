@@ -89,6 +89,32 @@ class Nix::PerlPackages::Drv {
     return $expr =~ /^\s*\[[^\]]*\]\s*$/s ? 1 : 0;
   }
 
+  # For `attr = [ ... ] ++ <rest>;` where the leading list is FLAT (no nested
+  # brackets), return (base_list_text, rest_text); rest begins with `++` and is
+  # preserved verbatim (it carries platform conditionals like
+  # `++ lib.optionals stdenv.hostPlatform.isDarwin [ ... ]`). Returns () for any
+  # other shape (with-expr, override list, leading-conditional with no base).
+  method attr_list_base_plus_rest($attr, $str=$part) {
+    my ($expr) = $str =~ m/^\s*\Q$attr\E\s*=\s*(.*?);/ms;
+    return unless defined $expr;
+    if ($expr =~ /^\s*(\[[^\[\]]*\])\s*(\+\+.*\S)\s*$/s) {
+      return ($1, $2);
+    }
+    return;
+  }
+
+  # Attrs referenced inside bracket lists within the conditional `rest`, so we
+  # never duplicate a platform-conditional dep into the unconditional base.
+  method _attrs_in_rest($rest) {
+    my %in;
+    while ($rest =~ /\[([^\[\]]*)\]/g) {
+      for my $tok (split /\s+/, $1) {
+        $in{$tok} = 1 if length $tok;
+      }
+    }
+    return %in;
+  }
+
   method set_or_add_attr_list($attr, @vals) {
     my @sorted = sort @vals;
 
@@ -98,7 +124,30 @@ class Nix::PerlPackages::Drv {
       }
       return;
     }
-    return if $self->has_attr_assignment($attr); # keep complex expressions untouched
+
+    # `[ base ] ++ <conditional rest>`: update the unconditional base list only,
+    # preserving the conditional suffix verbatim (do NOT munge macOS/platform
+    # conditionals). Exclude any attr already present in the conditional so a
+    # platform-only dep (e.g. Wx under !isDarwin) is not duplicated into base.
+    if (my ($base, $rest) = $self->attr_list_base_plus_rest($attr)) {
+      my %in_rest = $self->_attrs_in_rest($rest);
+      my @old_base = grep { length && !/^[\[\]]$/ } split /\s+/, $base;
+      my @new = grep { !$in_rest{$_} } @sorted;
+      push @new, grep { /^pkgs\./ } @old_base;  # keep pkgs.* already in base
+      @new = sort keys %{ { map { $_ => 1 } @new } };
+      my $new_base = "[ " . join(" ", @new) . " ]";
+      my $ok = ($part =~ s/(^\s*\Q$attr\E\s*=\s*)\[[^\[\]]*\](\s*\+\+)/$1$new_base$2/ms);
+      die "set_or_add_attr_list: failed to update base list for $attr" unless $ok;
+      return;
+    }
+
+    if ($self->has_attr_assignment($attr)) {
+      # Other complex expressions (with-exprs, override lists, leading
+      # conditionals) are left untouched — too risky to edit mechanically.
+      WARN("Keeping complex $attr expression untouched for "
+           . $self->attrname . " (manual review may be needed)");
+      return;
+    }
     return unless @sorted; # do not add empty attr lists
 
     my $attr_str = "[ ". join(" ", @sorted)." ]";
