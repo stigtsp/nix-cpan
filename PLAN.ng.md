@@ -183,7 +183,13 @@ Design around the loop's asymmetry — bake these into the tooling:
         current cache = 18 prunable + 10 commented hedges.** `--prune` removes
         only redundant+uncommented (18 applied, hedges retained). Module
         `Errata/Audit.pm` + t/20.
-  - [ ] Errata ADD-from-build-failure loop (separate session — needs build runs).
+  - [x] Errata ADD-from-build-failure — `nix-cpan diagnose <attr>` (+ `--apply`,
+        `--log`). DONE. Builds the derivation, parses "Can't locate Foo/Bar.pm in
+        @INC (you may need to install the Foo::Bar module)", resolves each missing
+        module to an attr, and classifies: **metadata-misses → suggest
+        extraBuildDependencies errata** (`--apply` writes it surgically);
+        **metadata-has-it → STALE, recommend `update --deps_only`** (not errata);
+        core/unresolvable → findings. Module `Errata/Suggest.pm` + t/21.
   - [ ] Audit the other 3 buckets: `moduleResolutionOverrides` (redundant if
         `resolve_module` finds it without the override), `buildFunctionOverrides`
         (redundant if `preferred_build_fun` agrees), `ignoreModule` (hardest —
@@ -279,6 +285,21 @@ Design around the loop's asymmetry — bake these into the tooling:
   encodes the hedge behavior. This is why those entries must never be auto-pruned,
   and why "managed errata" makes t/05 brittle. Don't refactor now; if errata
   curation continues, give t/05 its own fixture errata instead of the real file.
+
+- **#14 (2026-06-27) [key insight] build failure ≠ errata-add.** A missing build
+  dep falls into two cases, and only one is errata: (a) MetaCPAN metadata already
+  declares the dep but the nix derivation's buildInputs is **stale** → fix is
+  `update --deps_only` (regenerate), adding errata would just create a future
+  "redundant" audit hit; (b) metadata genuinely **misses** the dep → errata. The
+  `diagnose` command distinguishes these (mirror of the audit's redundancy check).
+  Observed live: Array-Compare's `Test::NoWarnings` failure is case (a) — metadata
+  has `Test::NoWarnings build/requires`, so it's STALE, not errata.
+- **Limitation (2026-06-27):** the genuine errata-add path (metadata-misses) is
+  covered by unit tests (t/21, mock cache, both branches) and the suggestion logic,
+  but not yet by a *real* build of a metadata-misses package (hard to find on
+  demand). Runtime-only missing deps are invisible at build time
+  (sufficiency/minimality asymmetry), so `diagnose` only ever infers build-bucket
+  errata. Add-then-rebuild-green on a real metadata-misses case is future work.
 
 ## Open questions
 
