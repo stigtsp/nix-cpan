@@ -117,8 +117,9 @@ missing. The test fixture `t/bin/nixfmt` stubs it for tests.
   old derivation block for the new one and *dies if the match count isn't 1*.
   This is a safety invariant — don't loosen it.
 - **The parser is line-oriented and hand-rolled** on purpose (no real Nix
-  grammar). `_mask_nix_line` is duplicated in `PerlPackages.pm` and `Drv.pm`;
-  keep them in sync. Test parser behavior in `t/15_parser_modes.t`.
+  grammar). The string/comment masker and brace counter live in `Nix::Util`
+  (`mask_nix_line`, `brace_delta`) as the single source of truth; `PerlPackages`
+  and `Drv` delegate to them. Test parser behavior in `t/15_parser_modes.t`.
 - **Tests use mocked release data**, never the network — they build a temp
   SQLite cache via `write_releases` (see `t/05_dependency_resolution.t`) and run
   the CLI through `t/lib/Test/CommandUtil.pm` (`run_nix_cpan`) with an isolated

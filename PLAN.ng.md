@@ -396,11 +396,12 @@ Design around the loop's asymmetry — bake these into the tooling:
   (`dependency()`), so a pruned entry is provably output-identical on the current
   cache; commented hedges are retained; the prune commit is git-reversible.
 
-**Deferred (perf/cleanup backlog):**
-- CR verify_build double `nix-build` eval (.src then full) — fail-fast tradeoff;
-  could mine one full-build log for the hash-mismatch signature instead.
-- DRY duplications incl. the `_mask_nix_line` copy in PerlPackages.pm + Drv.pm
-  (already noted in CLAUDE.md) and shared dep-list merge logic.
+**Deferred backlog — DONE (commit 2befc20):**
+- CR verify_build double `nix-build` eval — fixed: default does one full build and
+  mines the log for the hash-mismatch signature; `--fast` does `.src` only.
+- DRY: `_mask_nix_line` + `brace_delta` moved to Nix::Util (single source of
+  truth; both classes delegate). Dep-list merge factored into
+  Drv::_merge_inputs_from_mc.
 
 ## Open questions
 
