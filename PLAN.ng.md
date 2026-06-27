@@ -12,6 +12,21 @@ license, description — correctly and without munging hand-written special-case
 (macOS/platform conditionals, `doCheck`, `broken`, patch phases). End state:
 the tool is reliable enough to run unattended as an updater script / bot.
 
+## Status snapshot (2026-06-27)
+
+Full updater lifecycle built, tested (**256 tests green**), and validated against
+real `~/nixpkgs` builds. Subcommands: `compare`, `update` (bumps + deps incl.
+conditional lists), `generate_missing`, `errata` (audit/prune all 5 buckets),
+`diagnose` (errata add-from-failure), **`auto`** (build-gated bot updater with
+JSON report). 23 commits on `ng`; nothing committed in `~/nixpkgs`.
+
+Bugs found+fixed this run: #1 nixfmt missing; #7 version-compare (dev/scheme);
+#9 legacy sha256; #10 fetchpatch src-scoping; #2 conditional input lists;
+#16 generate_missing `--out` fragment; #17 compare/generate_missing exit codes.
+Open: #15 (buildInputs==propagatedBuildInputs — likely metadata-real, confirm).
+Deferred: failure quarantine, `init at V` commits for new deps, broad
+moderate/high runs, license-on-generated-stanzas.
+
 ## Goals
 
 - Bump version + `src.url` + `src.hash` for all updatable derivations.
