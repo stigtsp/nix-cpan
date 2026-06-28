@@ -122,10 +122,14 @@ nix run github:stigtsp/nix-cpan -- auto --risk safe --commit --nix-file ...
 The Perl dep set is shared via `perl-deps.nix` (imported by both `package.nix`
 and `shell.nix`) so they can't drift. `nix-build` is taken from the ambient PATH
 (you're already running via nix); `nixfmt` is pinned by the flake for treefmt
-parity. **Caveat:** the bundled `Errata.yaml` is read-only in the store, so the
-errata-*mutation* subcommands (`errata --prune`, `diagnose --apply`) must be run
-from a dev checkout, not `nix run`; read-only use (`compare`/`update`/`auto`/
-`errata` audit) works fine from the flake.
+parity. The bundled `Errata.yaml` is read-only in the store, so the
+errata-*mutation* subcommands (`errata --prune`, `diagnose --apply`) need a
+**writable copy**: pass `--errata-file /path/to/copy.yaml` (or set
+`NIX_CPAN_ERRATA_FILE`). Read-only use (`compare`/`update`/`auto`/`errata` audit)
+works against the bundled errata with no extra flags. `--errata-file` /
+`NIX_CPAN_ERRATA_FILE` also let you maintain your own errata anywhere; both feed
+`Nix::PerlPackages::Errata::set_errata_file`, which the lazily-loaded errata
+singleton honours.
 
 ## Conventions, invariants & gotchas
 

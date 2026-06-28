@@ -16,7 +16,7 @@ use Cpanel::JSON::XS qw(encode_json);
 use CPAN::Meta::YAML ();
 use Nix::PerlPackages;
 use Nix::MetaCPANCache;
-use Nix::PerlPackages::Errata qw(errata errata_file);
+use Nix::PerlPackages::Errata qw(errata);
 use Nix::PerlPackages::Errata::Audit qw(
   classify_extra_dependencies
   classify_build_function_overrides
@@ -35,6 +35,7 @@ our $VERSION = 0.2;
 option bool    => "debug"          => "Output debug information" => 0;
 option bool    => "verbose"        => "Show changes and determinations being made" => 0;
 option file    => "nix_file"       => "Path to perl-packages.nix" => "pkgs/top-level/perl-packages.nix";
+option file    => "errata_file"    => "Path to Errata.yaml (default: the bundled one; use a writable copy to prune/add when running from the nix store)" => undef;
 
 #option string => "db_file"        => "Path to store DB cache";
 #option string => "download_cache" => "Path to store responses from MetaCPAN API";
@@ -87,6 +88,13 @@ sub init_logging {
             layout => '%X{distro}%m%n'
           });
     Log::Log4perl::MDC->put('distro', q{});
+
+    # Point the (lazily-loaded) errata singleton at a user-supplied file before
+    # anything reads it. Every command calls init_logging first, so this runs
+    # before the first errata() access.
+    if (defined $app->errata_file && length $app->errata_file) {
+      Nix::PerlPackages::Errata::set_errata_file($app->errata_file);
+    }
 }
 
 sub command_refresh ($app) {
@@ -524,7 +532,7 @@ sub command_errata ($app) {
   my $result = classify_extra_dependencies($mcc, $cfg);
   # A comment on a dist block signals deliberate intent (often a hedge against
   # MetaCPAN snapshot unreliability); such entries are reported but never pruned.
-  my $commented = commented_dist_blocks(errata_file());
+  my $commented = commented_dist_blocks(Nix::PerlPackages::Errata::errata_file());
 
   my $total_redundant = 0;
   my $total_load = 0;
@@ -623,7 +631,7 @@ sub command_errata ($app) {
       }
     }
     my $removed = $app->prune_errata_entries(\@to_remove);
-    say "Pruned $removed redundant, uncommented errata entr" . ($removed == 1 ? "y" : "ies") . " from " . errata_file();
+    say "Pruned $removed redundant, uncommented errata entr" . ($removed == 1 ? "y" : "ies") . " from " . Nix::PerlPackages::Errata::errata_file();
   } else {
     say "Re-run with --prune to remove the $total_prunable redundant + uncommented entries." if $total_prunable;
   }
@@ -639,7 +647,7 @@ sub command_errata ($app) {
 # redundant item lines; if a block has no item lines left, the whole block
 # (key + its comments) is removed. Comments are kept whenever any item remains.
 sub prune_errata_entries ($app, $to_remove) {
-  my $file = errata_file();
+  my $file = Nix::PerlPackages::Errata::errata_file();
   open my $fh, "<", $file or die "Cannot read $file: $!";
   my @lines = <$fh>;
   close $fh;
@@ -783,9 +791,9 @@ sub command_diagnose ($app, @attrs) {
   }
 
   if ($app->apply && @all_suggestions) {
-    my $added = add_errata_entries(errata_file(), \@all_suggestions);
+    my $added = add_errata_entries(Nix::PerlPackages::Errata::errata_file(), \@all_suggestions);
     say "";
-    say "Applied $added errata addition" . ($added == 1 ? "" : "s") . " to " . errata_file() . ".";
+    say "Applied $added errata addition" . ($added == 1 ? "" : "s") . " to " . Nix::PerlPackages::Errata::errata_file() . ".";
     say "Re-run: $0 update --deps_only --inplace <attr>   to apply the new deps, then rebuild.";
   } elsif (@all_suggestions) {
     say "";
