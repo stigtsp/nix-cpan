@@ -108,6 +108,25 @@ nix-shell --run "perl nix-cpan.pl --nix_file ... update --diff Mojolicious"
 `nixfmt` is **required** for any write/commit path; the tool dies if it's
 missing. The test fixture `t/bin/nixfmt` stubs it for tests.
 
+### Running the packaged tool via the flake
+
+`flake.nix` packages the tool (script + `lib/` + Perl deps + `nixfmt`/`git`
+wrapped in) so it runs with no dev shell:
+
+```sh
+nix run .# -- compare --report --nix-file /path/to/nixpkgs/pkgs/top-level/perl-packages.nix
+nix run github:stigtsp/nix-cpan -- auto --risk safe --commit --nix-file ...
+```
+
+`packages.default`/`apps.default` = the tool; `devShells.default` = `shell.nix`.
+The Perl dep set is shared via `perl-deps.nix` (imported by both `package.nix`
+and `shell.nix`) so they can't drift. `nix-build` is taken from the ambient PATH
+(you're already running via nix); `nixfmt` is pinned by the flake for treefmt
+parity. **Caveat:** the bundled `Errata.yaml` is read-only in the store, so the
+errata-*mutation* subcommands (`errata --prune`, `diagnose --apply`) must be run
+from a dev checkout, not `nix run`; read-only use (`compare`/`update`/`auto`/
+`errata` audit) works fine from the flake.
+
 ## Conventions, invariants & gotchas
 
 - **Perl 5.38, `use experimental qw(class)`** — modules use the native `class`
