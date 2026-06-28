@@ -13,6 +13,7 @@ use File::Basename;
 use Perl6::Junction qw(any);
 use lib qw(lib);
 use Cpanel::JSON::XS qw(encode_json);
+use CPAN::Meta::YAML ();
 use Nix::PerlPackages;
 use Nix::MetaCPANCache;
 use Nix::PerlPackages::Errata qw(errata errata_file);
@@ -74,7 +75,7 @@ subcommand auto => "Automated build-gated updater: bump, verify, commit per pack
   option int    => "max"    => "Limit number of packages processed (0 = no limit)" => 0;
   option bool   => "commit" => "Commit verified bumps (omit for dry-run: verify then revert)" => 0;
   option bool   => "fast"   => "Verify hash via .src only; skip the full build (rely on downstream)" => 0;
-  option file   => "report_json" => "Write a machine-readable JSON report to this path" => undef;
+  option file   => "report_file" => "Write a machine-readable YAML report to this path" => undef;
 };
 
 
@@ -982,11 +983,11 @@ sub command_auto ($app, @attrs) {
     printf("  SKIP  %-32s %s\n", $s->{attr}, $s->{reason});
   }
 
-  if (defined $app->report_json) {
-    open my $jh, ">", $app->report_json or die "Cannot write ".$app->report_json.": $!";
-    print {$jh} encode_json($report) . "\n";
-    close $jh;
-    say "Wrote JSON report to ".$app->report_json;
+  if (defined $app->report_file) {
+    # YAML (not JSON) so the report diffs cleanly in review and can be read/edited
+    # by hand, consistent with Errata.yaml.
+    CPAN::Meta::YAML->new($report)->write($app->report_file);
+    say "Wrote YAML report to ".$app->report_file;
   }
 
   return (@failed ? 1 : 0);

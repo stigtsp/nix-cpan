@@ -4,7 +4,8 @@ use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use lib qw(t/lib);
 use Test::CommandUtil qw(run_nix_cpan git_cmd);
-use Cpanel::JSON::XS qw(decode_json);
+use CPAN::Meta::YAML ();
+sub load_yaml ($p) { CPAN::Meta::YAML->read($p)->[0] }
 
 use_ok("Nix::MetaCPANCache");
 
@@ -59,17 +60,17 @@ sub commit_count { my $r = git_cmd($root, "rev-list", "--count", "HEAD"); my $n 
 my $base_commits = commit_count();
 
 # --- 1) dry-run: verifies (stub build passes), reverts, no commit ---
-my $rpt = "$tmpdir/report.json";
+my $rpt = "$tmpdir/report.yaml";
 {
   my $r = run_nix_cpan($cache_home, {}, "auto", "Root", "--risk", "safe",
-                       "--report_json", $rpt, "--nix-file", $nix_file);
+                       "--report_file", $rpt, "--nix-file", $nix_file);
   ok($r->{ok}, "auto dry-run exits 0 (no failures)");
   like($r->{out}, qr/OK\s+Root\s+1\.0 -> 2\.0/, "dry-run verifies Root");
   is(porcelain(), "", "dry-run leaves working tree clean (reverted)");
   is(commit_count(), $base_commits, "dry-run makes no commit");
   like(read_file($nix_file), qr/version = "1\.0"/, "file still at old version after dry-run");
 
-  my $j = decode_json(read_file($rpt));
+  my $j = load_yaml($rpt);
   is(scalar $j->{updated}->@*, 1, "report: 1 updated");
   is($j->{updated}[0]{committed}, 0, "report: dry-run not committed");
   is(scalar $j->{failed}->@*, 0, "report: 0 failed");
@@ -77,16 +78,16 @@ my $rpt = "$tmpdir/report.json";
 
 # --- 2) forced build failure: reverts, no commit, recorded in report ---
 {
-  my $rpt2 = "$tmpdir/report2.json";
+  my $rpt2 = "$tmpdir/report2.yaml";
   my $r = run_nix_cpan($cache_home, { NIX_CPAN_FORCE_BUILD_FAIL => "Root" },
                        "auto", "Root", "--risk", "safe", "--commit",
-                       "--report_json", $rpt2, "--nix-file", $nix_file);
+                       "--report_file", $rpt2, "--nix-file", $nix_file);
   ok(!$r->{ok}, "auto exits non-zero when a build gate fails");
   is(porcelain(), "", "failed bump reverted -> working tree clean");
   is(commit_count(), $base_commits, "failed bump produces no commit");
   like(read_file($nix_file), qr/version = "1\.0"/, "file unchanged after failed bump");
 
-  my $j = decode_json(read_file($rpt2));
+  my $j = load_yaml($rpt2);
   is(scalar $j->{failed}->@*, 1, "report: 1 failed");
   is($j->{failed}[0]{attr}, "Root", "report: failure records attr");
   is($j->{failed}[0]{old}, "1.0", "report: failure records old version");

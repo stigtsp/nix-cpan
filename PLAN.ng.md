@@ -18,7 +18,7 @@ Full updater lifecycle built, tested (**256 tests green**), and validated agains
 real `~/nixpkgs` builds. Subcommands: `compare`, `update` (bumps + deps incl.
 conditional lists), `generate_missing`, `errata` (audit/prune all 5 buckets),
 `diagnose` (errata add-from-failure), **`auto`** (build-gated bot updater with
-JSON report). 23 commits on `ng`; nothing committed in `~/nixpkgs`.
+YAML report). Commits on `ng`; nothing committed in `~/nixpkgs`.
 
 Bugs found+fixed this run: #1 nixfmt missing; #7 version-compare (dev/scheme);
 #9 legacy sha256; #10 fetchpatch src-scoping; #2 conditional input lists;
@@ -230,7 +230,7 @@ Design around the loop's asymmetry — bake these into the tooling:
   - [x] Updater entry point: risk-filtered, **build-gated** (full build default;
         `.src` fail-fast pre-filter; `--fast` = src-only opt-in), revert-on-fail
         via `git checkout` (broken bumps never committed), per-package commits,
-        dry-run default, machine-readable JSON report (failures carry
+        dry-run default, machine-readable YAML report (failures carry
         {attr,old,new,reason} for future quarantine), exit-code aware.
         Idempotent via git (a landed bump is no longer a candidate next run).
         v1 scope: deps-all-present candidates only (no --missing) for atomic revert.
@@ -240,11 +240,11 @@ Design around the loop's asymmetry — bake these into the tooling:
         ADDs and a safe dep REMOVAL: DateTimeFormatNatural built without
         ListMoreUtils; Future swapped Test2Suite→ModuleBuild), 0 failed, 1
         skipped (Graph needs the uncommitted Heap). All commits single-file,
-        file canonical, JSON report well-formed. Entirely mechanical — the only
+        file canonical, YAML report well-formed. Entirely mechanical — the only
         non-tool input was the demo package list (the product form is
         `auto --risk moderate` with no list).
   - [ ] **Deferred** (future): failure quarantine (skip-list keyed by attr+version,
-        from the JSON report) so the bot doesn't rebuild known-bad bumps each run;
+        from the YAML report) so the bot doesn't rebuild known-bad bumps each run;
         per-package `init at V` commits for new deps (D4 gap); moderate/high at
         scale once #15 (build==propagated deps) is confirmed metadata-real.
 
@@ -418,4 +418,4 @@ Design around the loop's asymmetry — bake these into the tooling:
 - `version_numified` vs `Sort::Versions` — are there packages where MetaCPAN's
   "latest" disagrees with what we'd pick? (filter_releases dedup logic)
 - Packages with non-`fetchurl` / non-CPAN sources: enumerate and exclude cleanly.
-- Updater-script output contract for the future bot (JSON report shape).
+- Updater-script output contract for the future bot (YAML report shape).
