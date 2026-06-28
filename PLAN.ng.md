@@ -235,6 +235,14 @@ Design around the loop's asymmetry — bake these into the tooling:
         Idempotent via git (a landed bump is no longer a candidate next run).
         v1 scope: deps-all-present candidates only (no --missing) for atomic revert.
         Validated on real ~/nixpkgs (green→commit, forced-fail→revert) + t/23.
+        **Moderate batch validated (2026-06-28):** `auto --risk moderate --commit`
+        over 8 dep-changing candidates → 7 built+tested+committed (incl. dep
+        ADDs and a safe dep REMOVAL: DateTimeFormatNatural built without
+        ListMoreUtils; Future swapped Test2Suite→ModuleBuild), 0 failed, 1
+        skipped (Graph needs the uncommitted Heap). All commits single-file,
+        file canonical, JSON report well-formed. Entirely mechanical — the only
+        non-tool input was the demo package list (the product form is
+        `auto --risk moderate` with no list).
   - [ ] **Deferred** (future): failure quarantine (skip-list keyed by attr+version,
         from the JSON report) so the bot doesn't rebuild known-bad bumps each run;
         per-package `init at V` commits for new deps (D4 gap); moderate/high at
