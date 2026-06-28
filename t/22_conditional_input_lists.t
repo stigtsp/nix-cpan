@@ -70,6 +70,32 @@ NIX
        "pkgs.cups retained in base, conditional preserved");
 }
 
+# --- singular `++ lib.optional <cond> <bare dep>` (no brackets) ---
+{
+  my $d = mkdrv(<<'NIX');
+  Foo = buildPerlPackage {
+    buildInputs = [ Aaa ] ++ lib.optional (!stdenv.hostPlatform.isDarwin) Wx;
+  };
+NIX
+  # metadata resolves Wx (the conditional dep) + a new Bbb; Aaa kept.
+  $d->set_or_add_attr_list("buildInputs", qw(Aaa Bbb Wx));
+  my $p = $d->part;
+  like($p, qr/buildInputs = \[ Aaa Bbb \] \+\+ lib\.optional \(!stdenv\.hostPlatform\.isDarwin\) Wx;/,
+       "singular lib.optional: base updated, conditional preserved");
+  unlike($p, qr/\[ Aaa Bbb Wx \]/, "Wx not duplicated into the base (stays conditional)");
+}
+
+# --- reader: get_attr_list returns the base of `[ ] ++ <cond>` (not empty) ---
+{
+  my $d = mkdrv(<<'NIX');
+  Foo = buildPerlPackage {
+    buildInputs = [ Aaa Bbb ] ++ lib.optionals stdenv.hostPlatform.isDarwin [ DarwinOnly ];
+  };
+NIX
+  is_deeply([ $d->build_inputs ], [ qw(Aaa Bbb) ],
+            "build_inputs reads the base list of a conditional input list");
+}
+
 # --- non-handled complex shapes are left untouched ---
 {
   my $with = <<'NIX';

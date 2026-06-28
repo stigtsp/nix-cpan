@@ -97,9 +97,12 @@ sub suggest_from_log ($mcc, $log, $dist) {
 # bucket at end of file. Skips entries already present. Returns count added.
 sub add_errata_entries ($file, $entries) {
   open my $fh, "<", $file or die "Cannot read $file: $!";
+  local $/ = "\n";   # read line-by-line regardless of the caller's $/
   my @lines = <$fh>;
   close $fh;
-  chomp(my @raw = @lines);
+  # Guarantee the last line is newline-terminated so a splice can't concatenate
+  # a new entry onto it (`    - Helper    - NewMod`).
+  $lines[-1] .= "\n" if @lines && $lines[-1] !~ /\n\z/;
 
   my $added = 0;
   for my $e (@$entries) {
@@ -168,6 +171,13 @@ sub _dist_span ($lines, $b_start, $b_end, $dist) {
     last if $lines->[$j] =~ /^\s{0,2}\S/;   # next dist key or bucket end
     $end = $j;
   }
+  # Back up past any trailing blank lines / comments so a new `- Module` is
+  # spliced right after the last actual item, not after a dangling blank/comment.
+  my $last_item = $start;
+  for my $i ($start + 1 .. $end) {
+    $last_item = $i if $lines->[$i] =~ /^\s{4}-/;
+  }
+  $end = $last_item;
   return ($start, $end);
 }
 

@@ -61,8 +61,14 @@ class Nix::PerlPackages::Drv {
 
   method get_attr_list ($attr, $str=$part) {
     ### get_attr_list text: $text
+    # Grab the first balanced `[ ... ]` after `attr =`. Do NOT require a `;`
+    # immediately after it: for the conditional form `[ base ] ++ lib.optionals
+    # ... [ extra ];` that would fail and (wrongly) return an empty list, which
+    # made dep_delta/compare see every conditional-list package as a full set of
+    # spurious additions. We return the unconditional base list, mirroring what
+    # the writer (set_or_add_attr_list) edits.
     my ($val) = $str =~ m/^\s*\Q$attr\E\s*=\s*
-                           $RE{balanced}{-parens=>'[]'};
+                           $RE{balanced}{-parens=>'[]'}
                          /gmx;
 
     return unless $val;
@@ -107,10 +113,17 @@ class Nix::PerlPackages::Drv {
   # never duplicate a platform-conditional dep into the unconditional base.
   method _attrs_in_rest($rest) {
     my %in;
+    # Plural form: deps live in bracket lists, e.g. `++ lib.optionals cond [ X Y ]`.
     while ($rest =~ /\[([^\[\]]*)\]/g) {
       for my $tok (split /\s+/, $1) {
         $in{$tok} = 1 if length $tok;
       }
+    }
+    # Singular form: a bare dep with no brackets, e.g.
+    # `++ lib.optional (!stdenv.hostPlatform.isDarwin) Wx`. Capture the dep token
+    # after the condition so it is not also promoted into the unconditional base.
+    while ($rest =~ /\blib\.optional\s+(?:\([^()]*\)|\S+)\s+([A-Za-z_][\w]*)/g) {
+      $in{$1} = 1;
     }
     return %in;
   }

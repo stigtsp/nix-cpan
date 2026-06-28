@@ -87,7 +87,7 @@ my $added = add_errata_entries($yaml, [
 ]);
 is($added, 3, "added 3 (duplicate skipped)");
 
-open my $rh, "<", $yaml or die $!; local $/; my $out = <$rh>; close $rh;
+my $out = do { open my $rh, "<", $yaml or die $!; local $/; <$rh> };
 
 like($out, qr/  Archive-Zip:\n    - Test::MockModule\n    - Test::Deep\n/,
      "appended to existing dist block");
@@ -98,5 +98,30 @@ is($count_mockmodule, 1, "duplicate not added twice");
 like($out, qr/buildFunctionOverrides:\n  Whatever:\n    - Module\n/, "created brand-new bucket at EOF");
 # existing content preserved
 like($out, qr/extraRuntimeDependencies:\n  Some-Dist:\n    - Helper\n/, "unrelated bucket preserved");
+
+# --- robustness on hand-edited files (the --errata-file use case) ---
+{
+  # No trailing newline on the last line.
+  my $f2 = "$tmp/no-newline.yaml";
+  open my $w, ">", $f2 or die $!;
+  print {$w} "extraBuildDependencies:\n  Dist:\n    - Aaa";  # note: no final \n
+  close $w;
+  add_errata_entries($f2, [ { bucket => "extraBuildDependencies", dist => "Dist", module => "Bbb" } ]);
+  my $o = do { open my $r, "<", $f2 or die $!; local $/; <$r> };
+  like($o, qr/    - Aaa\n    - Bbb\n/, "no-trailing-newline file: new item lands on its own line");
+  unlike($o, qr/- Aaa[ \t]+- Bbb/, "no concatenation onto the last line (items not on one line)");
+}
+{
+  # A trailing in-block comment (4-space) after the last item must not capture
+  # the new item — it should be inserted right after the last real item.
+  my $f3 = "$tmp/trailing-comment.yaml";
+  open my $w, ">", $f3 or die $!;
+  print {$w} "extraBuildDependencies:\n  Dist:\n    - Aaa\n    # trailing note\n  Other:\n    - Zzz\n";
+  close $w;
+  add_errata_entries($f3, [ { bucket => "extraBuildDependencies", dist => "Dist", module => "Bbb" } ]);
+  my $o = do { open my $r, "<", $f3 or die $!; local $/; <$r> };
+  like($o, qr/  Dist:\n    - Aaa\n    - Bbb\n    # trailing note\n/,
+       "new item inserted after the last real item, before the trailing in-block comment");
+}
 
 done_testing();

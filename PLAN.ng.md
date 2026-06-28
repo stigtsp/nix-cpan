@@ -411,6 +411,37 @@ Design around the loop's asymmetry — bake these into the tooling:
   truth; both classes delegate). Dep-list merge factored into
   Drv::_merge_inputs_from_mc.
 
+## Code review #2 (2026-06-28, max-effort workflow + dependency audit)
+
+32 findings → 15 distinct. Fixed:
+- **CR2-1 [CRITICAL] SRI hash truncation** — `sha256_hex_to_sri` used
+  `Math::BigInt->to_bytes`, which strips leading zero bytes → a wrong, 31-byte
+  hash for any digest starting `00` (~1/256 of releases) on the active bump path.
+  Now `pack("H*",$hex)` (correct, dependency-free) + a 64-hex format guard. t/02
+  regression (leading-zero → 32 bytes).
+- **CR2-2 [HIGH] conditional-list reader returned empty** — `get_attr_list`
+  required `;` right after `[...]`, so `[ base ] ++ lib.optionals …` read as empty,
+  making `dep_delta`/`compare` see a full spurious add-set → `auto --risk safe`
+  silently skipped every such package. Reader now grabs the base list. t/22.
+- **CR2-3 singular `++ lib.optional cond Dep`** (no brackets) — `_attrs_in_rest`
+  now also harvests the bare dep so it isn't duplicated into the base. t/22.
+- **CR2-4 hedge comment ABOVE the dist key** not detected by
+  `commented_dist_blocks` → prune could delete a hedged entry. Now detected. t/20.
+- **CR2-5 errata editors not robust** — guarantee a trailing newline before splice
+  (no `- A    - B` concat), and don't absorb trailing blanks/comments into a dist
+  block (`_dist_span` backs up to the last item). Plus `local $/="\n"` in all three
+  errata file readers so they're immune to a caller's `$/`. Dropped dead `@raw`.
+  t/21.
+- **DEP AUDIT (slim):** dropped 4 unused deps from perl-deps.nix — **Mojolicious**
+  (heavy, never used), **HTTP::Tiny::Cache** (code uses core HTTP::Tiny),
+  **File::Util::Tempdir** (dead), **Math::BigInt** (core; its only use removed by
+  CR2-1). Flake package + dev shell rebuild green.
+
+Not changed (documented): CR2-6 src-block readers are line-anchored (silent skip
+on non-canonical src — does not occur in nixfmt-canonical nixpkgs); `Smart::Comments`
+is cosmetic-only but is a source filter across 4 files and removing it changes the
+progress-bar UX — left as an optional future slim.
+
 ## Open questions
 
 - Region-only nixfmt: does it reproduce whole-file nixfmt byte-for-byte? (D2 risk)

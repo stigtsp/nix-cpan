@@ -649,6 +649,7 @@ sub command_errata ($app) {
 sub prune_errata_entries ($app, $to_remove) {
   my $file = Nix::PerlPackages::Errata::errata_file();
   open my $fh, "<", $file or die "Cannot read $file: $!";
+  local $/ = "\n";   # read line-by-line regardless of the caller's $/
   my @lines = <$fh>;
   close $fh;
 

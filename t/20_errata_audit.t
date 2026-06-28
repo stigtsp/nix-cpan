@@ -56,13 +56,17 @@ extraRuntimeDependencies:
   WidgetCore:
     # deliberate hedge against snapshot flakiness
     - Helper
+  # hedge comment placed ABOVE the dist key (natural YAML style)
+  AboveHedge:
+    - Helper
   Lonely:
     - Helper
 YAML
 close $fh;
 
 my $commented = commented_dist_blocks($yaml);
-ok($commented->{extraRuntimeDependencies}{WidgetCore}, "commented block detected as hedge");
+ok($commented->{extraRuntimeDependencies}{WidgetCore}, "comment inside block detected as hedge");
+ok($commented->{extraRuntimeDependencies}{AboveHedge}, "comment above the dist key detected as hedge");
 ok(!$commented->{extraRuntimeDependencies}{Lonely}, "uncommented block not a hedge");
 
 # --- buildFunctionOverrides + ignoreModule classifiers (own mock cache) ---

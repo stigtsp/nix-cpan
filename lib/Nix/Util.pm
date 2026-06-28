@@ -3,7 +3,6 @@ package Nix::Util;
 use v5.38;
 use feature qw(signatures);
 use Exporter qw(import);
-use Math::BigInt;
 use Smart::Comments -ENV;
 use MIME::Base64;
 use Log::Log4perl qw(:easy);
@@ -112,8 +111,12 @@ sub brace_delta ($line) {
 
 sub sha256_hex_to_sri ($hex) {
     die "sha256_hex_to_sri: requires a non-empty hex string" unless defined $hex && length $hex;
-    my $num = Math::BigInt->new("0x$hex")->to_bytes();
-    return "sha256-" . encode_base64( $num, "" );
+    die "sha256_hex_to_sri: expected 64 hex chars, got '$hex'"
+      unless $hex =~ /\A[0-9a-fA-F]{64}\z/;
+    # pack the hex straight to its 32 raw bytes. (Math::BigInt->to_bytes was wrong:
+    # it strips leading zero bytes, so a digest beginning "00.." encoded to 31
+    # bytes and a wrong, too-short SRI for ~1/256 of releases.)
+    return "sha256-" . encode_base64( pack( "H*", $hex ), "" );
 }
 
 sub distro_name_to_attr ($distro) {

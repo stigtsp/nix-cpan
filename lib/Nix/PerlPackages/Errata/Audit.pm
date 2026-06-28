@@ -165,6 +165,7 @@ sub classify_ignore_modules ($mcc, $cfg) {
 # Returns { bucket => { dist => 1 } }.
 sub commented_dist_blocks ($file) {
   open my $fh, "<", $file or die "Cannot read $file: $!";
+  local $/ = "\n";   # read line-by-line regardless of the caller's $/
   my @lines = <$fh>;
   close $fh;
 
@@ -176,8 +177,15 @@ sub commented_dist_blocks ($file) {
     if ($line =~ /^(\w+):\s*$/) { $cur_bucket = $1; $i++; next; }
     if ($line =~ /^\s{2}(\S[^:]*):\s*$/) {
       my $dist = $1;
-      my $j = $i + 1;
       my $has_comment = 0;
+      # A comment directly above the dist key (skipping blank lines) is a hedge
+      # marker too — the natural YAML style. Treating it conservatively as a hedge
+      # errs toward NOT pruning, which is the safe direction.
+      my $k = $i - 1;
+      $k-- while $k >= 0 && $lines[$k] =~ /^\s*$/;
+      $has_comment = 1 if $k >= 0 && $lines[$k] =~ /^\s*#/;
+      # ... and any comment inside the block.
+      my $j = $i + 1;
       while ($j < @lines && $lines[$j] !~ /^\s{0,2}\S/) {
         $has_comment = 1 if $lines[$j] =~ /^\s*#/;
         $j++;

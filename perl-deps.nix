@@ -65,13 +65,9 @@ with pp;
   ArrayDiff
   CpanelJSONXS
   DBDSQLite
-  FileUtilTempdir
   FileXDG
-  HTTPTinyCache
   Log4Perl
-  MathBigInt
   MetaCPANClient
-  Mojolicious
   Perl6Junction
   RegexpCommon
   SmartComments
