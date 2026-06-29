@@ -1,11 +1,9 @@
 #!/usr/bin/env perl
 
 
-use v5.38;
+use v5.42;
 use Applify;
 
-use strict;
-use warnings;
 use Array::Diff;
 use Log::Log4perl qw(:easy);
 use File::Basename;
@@ -26,8 +24,6 @@ use Nix::PerlPackages::Errata::Suggest qw(suggest_from_log add_errata_entries pa
 use Nix::Util qw(sha256_hex_to_sri render_license);
 use Text::Diff ();
 use IPC::Cmd qw(run);
-
-use experimental qw(signatures try);
 
 our $VERSION = 0.2;
 
@@ -205,7 +201,7 @@ sub print_compare_report ($app, $updates) {
   my @safe = sort { $a->{attrname} cmp $b->{attrname} }
              grep { $_->{dep_delta} == 0 } @$updates;
   my @moderate = sort { $b->{dep_delta} <=> $a->{dep_delta} || $a->{attrname} cmp $b->{attrname} }
-                 grep { $_->{dep_delta} >= 1 && $_->{dep_delta} <= 6 } @$updates;
+                 grep { 1 <= $_->{dep_delta} <= 6 } @$updates;
   my @high = sort { $b->{dep_delta} <=> $a->{dep_delta} || $a->{attrname} cmp $b->{attrname} }
              grep { $_->{dep_delta} >= 7 } @$updates;
 
@@ -330,13 +326,12 @@ sub render_generated_drv ($app, $release) {
   my $license = render_license($release->license);
 
   if (defined $description) {
-    $description =~ s/\n+/ /g;
-    $description =~ s/\s+/ /g;
-    $description =~ s/^\s+|\s+$//g;
+    $description =~ s/\s+/ /g;          # collapse all whitespace (incl. newlines)
+    $description = builtin::trim($description);
     $description =~ s/\.$//;
   }
   if (defined $homepage) {
-    $homepage =~ s/^\s+|\s+$//g;
+    $homepage = builtin::trim($homepage);
   }
   my $esc = sub ($s) {
     return undef unless defined $s;
@@ -542,7 +537,7 @@ sub command_errata ($app) {
     my $l = scalar $info->{load_bearing}->@*;
     $total_redundant += $r;
     $total_load += $l;
-    printf("%s: %d entries — %d provably redundant, %d load-bearing\n",
+    printf("%s: %d entries -- %d provably redundant, %d load-bearing\n",
            $bucket, $info->{total}, $r, $l);
     for my $e (sort { $a->{dist} cmp $b->{dist} || $a->{module} cmp $b->{module} } $info->{redundant}->@*) {
       my $is_hedge = $commented->{$bucket}{ $e->{dist} } ? 1 : 0;
@@ -550,7 +545,7 @@ sub command_errata ($app) {
       printf("  REDUNDANT%s %-32s %-28s -> %s%s\n",
              $is_hedge ? "*" : " ",
              $e->{dist}, $e->{module}, $e->{attr},
-             $is_hedge ? "   [commented hedge — retained]" : "");
+             $is_hedge ? "   [commented hedge -- retained]" : "");
     }
   }
 
@@ -603,10 +598,10 @@ sub command_errata ($app) {
       . scalar($ign->{redundant}->@*) . " redundant, "
       . scalar($ign->{load_bearing}->@*) . " load-bearing";
     for my $e ($ign->{redundant}->@*) {
-      say "  REDUNDANT  $e->{module} — $e->{reason}";
+      say "  REDUNDANT  $e->{module} -- $e->{reason}";
     }
     for my $e ($ign->{load_bearing}->@*) {
-      say "  keep       $e->{module} — $e->{class}" . (defined $e->{attr} ? " ($e->{attr})" : "");
+      say "  keep       $e->{module} -- $e->{class}" . (defined $e->{attr} ? " ($e->{attr})" : "");
     }
   }
 
@@ -700,7 +695,7 @@ sub prune_errata_entries ($app, $to_remove) {
       if ($has_item) {
         push @out, $line, @kept;
       }
-      # else: drop the whole block (key + comments) — nothing pushed.
+      # else: drop the whole block (key + comments) -- nothing pushed.
       $i = $j;
       next;
     }
@@ -756,7 +751,7 @@ sub command_diagnose ($app, @attrs) {
         ["nix-build", $root, "-A", "perlPackages.$attr", "--no-out-link"]);
       $log = join("", ($buf // [])->@*);
       if ($ok) {
-        say "perlPackages.$attr ($dist): builds OK — no missing build deps.";
+        say "perlPackages.$attr ($dist): builds OK -- no missing build deps.";
         next;
       }
       INFO("Build failed for $attr; analysing log");
@@ -778,13 +773,13 @@ sub command_diagnose ($app, @attrs) {
     }
     for my $s (@stale) {
       say "  STALE    $s->{module} (attr $s->{attr}) is in MetaCPAN metadata but missing from the";
-      say "           derivation — regenerate with: $0 update --deps_only --inplace $attr   (no errata needed)";
+      say "           derivation -- regenerate with: $0 update --deps_only --inplace $attr   (no errata needed)";
     }
     for my $f (@find) {
       if ($f->{type} eq "core_module") {
         say "  note     $f->{module} is a core module (not an errata dep)";
       } elsif ($f->{type} eq "unresolvable_module") {
-        say "  WARN     $f->{module} is missing but unresolvable — likely needs a new package, not errata";
+        say "  WARN     $f->{module} is missing but unresolvable -- likely needs a new package, not errata";
       }
     }
     push @all_suggestions, @sugg;
@@ -882,7 +877,7 @@ sub command_auto ($app, @attrs) {
   # for --commit, plus the branch check.)
   if ($app->git_file_dirty) {
     die "auto: " . $app->nix_file . " has uncommitted changes.\n"
-      . "Commit or stash them first — auto reverts via 'git checkout' and would discard them.\n";
+      . "Commit or stash them first -- auto reverts via 'git checkout' and would discard them.\n";
   }
   $app->git_sanity if $app->commit;
 

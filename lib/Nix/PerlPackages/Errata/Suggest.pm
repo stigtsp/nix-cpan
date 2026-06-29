@@ -1,10 +1,6 @@
 package Nix::PerlPackages::Errata::Suggest;
 
-use v5.38;
-use strict;
-use warnings;
-use feature qw(signatures);
-no warnings qw(experimental::signatures);
+use v5.42;
 use Exporter qw(import);
 use Module::CoreList;
 
@@ -34,12 +30,12 @@ sub parse_missing_modules ($log) {
 #
 # Build-time failures (a module missing during configure/build/test) mean the
 # module is needed to *build* the distribution, so suggestions target
-# extraBuildDependencies. (Runtime-only needs cannot be observed from a build —
-# the sufficiency/minimality asymmetry — so we never infer extraRuntime here.)
+# extraBuildDependencies. (Runtime-only needs cannot be observed from a build --
+# the sufficiency/minimality asymmetry -- so we never infer extraRuntime here.)
 #
 # Crucially, we only suggest *errata* for a missing module that MetaCPAN's
 # metadata does NOT already declare for $dist. If metadata already declares it
-# (in build/test/configure), the derivation's buildInputs are merely stale — the
+# (in build/test/configure), the derivation's buildInputs are merely stale -- the
 # right fix is `update --deps_only` to regenerate from metadata, NOT a new errata
 # entry (which would just become "redundant" in the audit). Such cases are
 # returned under `stale` instead of `suggestions`.

@@ -1,10 +1,6 @@
 package Nix::PerlPackages::Errata::Audit;
 
-use v5.38;
-use strict;
-use warnings;
-use feature qw(signatures);
-no warnings qw(experimental::signatures);
+use v5.42;
 use Exporter qw(import);
 use Module::CoreList;
 
@@ -103,7 +99,7 @@ sub classify_extra_dependencies ($mcc, $cfg) {
 }
 
 # Classify buildFunctionOverrides entries. An override is REDUNDANT iff MetaCPAN
-# metadata alone (no errata) already yields the forced build function — then
+# metadata alone (no errata) already yields the forced build function -- then
 # removing it cannot change the chosen builder. Otherwise it is load-bearing
 # (metadata is undecided or disagrees, so the override is doing the work).
 # Returns { redundant => [ {dist,forced,metadata} ], load_bearing => [...],
@@ -160,7 +156,7 @@ sub classify_ignore_modules ($mcc, $cfg) {
 
 # Scan the raw Errata.yaml text and return which distribution blocks carry a
 # comment. A comment signals deliberate intent (e.g. a hedge against MetaCPAN
-# snapshot unreliability — "MetaCPAN can miss module->distribution mapping ...");
+# snapshot unreliability -- "MetaCPAN can miss module->distribution mapping ...");
 # such entries must NOT be auto-pruned even when currently redundant.
 # Returns { bucket => { dist => 1 } }.
 sub commented_dist_blocks ($file) {
@@ -179,7 +175,7 @@ sub commented_dist_blocks ($file) {
       my $dist = $1;
       my $has_comment = 0;
       # A comment directly above the dist key (skipping blank lines) is a hedge
-      # marker too — the natural YAML style. Treating it conservatively as a hedge
+      # marker too -- the natural YAML style. Treating it conservatively as a hedge
       # errs toward NOT pruning, which is the safe direction.
       my $k = $i - 1;
       $k-- while $k >= 0 && $lines[$k] =~ /^\s*$/;

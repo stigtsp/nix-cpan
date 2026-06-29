@@ -1,5 +1,4 @@
-use v5.38;
-use strict;
+use v5.42;
 use experimental qw(class);
 
 class Nix::MetaCPANCache::Release {
@@ -12,10 +11,10 @@ class Nix::MetaCPANCache::Release {
   use List::Util qw(uniq);
   use Module::CoreList;
 
-  field $name :param;
-  field $distribution :param;
-  field $main_module :param;
-  field $data :param;
+  field $name :param :reader;
+  field $distribution :param :reader;
+  field $main_module :param :reader;
+  field $data :param :reader;
   field $_mcc :param;
   field @deny_attr_prefix = qw(Win32 MSWin32);
   field @deny_distribution_prefix = qw(Win32- MSWin32-);
@@ -23,11 +22,6 @@ class Nix::MetaCPANCache::Release {
   ADJUST {
     $data = decode_json($data);
   };
-
-  method name         { return $name }
-  method distribution { return $distribution }
-  method main_module  { return $main_module }
-  method data         { return $data }
 
 
 

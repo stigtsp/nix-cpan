@@ -1,5 +1,5 @@
-use v5.38;
-use strict;
+use v5.42;
+# multidimensional: required by Regexp::Common's $RE{balanced}{-parens=>'[]'} idiom.
 use experimental qw(class multidimensional);
 
 class Nix::PerlPackages::Drv {
@@ -8,22 +8,18 @@ class Nix::PerlPackages::Drv {
   use Regexp::Common;
   use Perl6::Junction qw(any);
 
-  field $prepart        :param;
-  field $attrname       :param;
+  field $prepart        :param :reader;
+  field $attrname       :param :reader;
   field $orig_build_fun :param(build_fun);
-  field $orig_part      :param(part);
+  field $orig_part      :param(part) :reader;
 
-  field $build_fun;
-  field $part;
+  field $build_fun :reader;
+  field $part :reader;
 
   ADJUST {
     $build_fun = $orig_build_fun;
     $part      = $orig_part;
   };
-
-  method orig_part {
-    return $orig_part;
-  }
 
   method dirty {
     return !($orig_build_fun eq $build_fun &&
@@ -153,7 +149,7 @@ class Nix::PerlPackages::Drv {
 
     if ($self->has_attr_assignment($attr)) {
       # Other complex expressions (with-exprs, override lists, leading
-      # conditionals) are left untouched — too risky to edit mechanically.
+      # conditionals) are left untouched -- too risky to edit mechanically.
       WARN("Keeping complex $attr expression untouched for "
            . $self->attrname . " (manual review may be needed)");
       return;
@@ -225,18 +221,6 @@ class Nix::PerlPackages::Drv {
     return $self->get_attr_list('propagatedBuildInputs');
   }
 
-  method attrname {
-    return $attrname;
-  }
-
-  method prepart {
-    return $prepart;
-  }
-
-  method build_fun {
-    return $build_fun;
-  }
-
   method build_fun_changed {
     return $build_fun ne $orig_build_fun ? 1 : 0;
   }
@@ -251,10 +235,6 @@ class Nix::PerlPackages::Drv {
     my $new = $prepart;
     $new =~ s/buildPerl(?:Package|Module)/buildPerl$build_fun/;
     return $new;
-  }
-
-  method part {
-    return $part;
   }
 
   method update_from_metacpan ($mc) {
@@ -464,7 +444,7 @@ class Nix::PerlPackages::Drv {
   }
 
   # Set $attr within the src fetcher block. Returns 1 if it edited a line, 0 if
-  # the src block (or the attr within it) was not found — the caller decides
+  # the src block (or the attr within it) was not found -- the caller decides
   # whether to fall back. Never dies, so a graceful fallback is possible.
   method _set_src_attr($attr, $val) {
     my @lines = split /\n/, $part, -1;

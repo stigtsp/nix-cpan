@@ -1,5 +1,4 @@
-use v5.38;
-use strict;
+use v5.42;
 use experimental qw(class);
 
 

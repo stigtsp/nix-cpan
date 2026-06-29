@@ -133,9 +133,15 @@ singleton honours.
 
 ## Conventions, invariants & gotchas
 
-- **Perl 5.38, `use experimental qw(class)`** — modules use the native `class`
-  feature (`field`, `method`, `ADJUST`), not Moose/Moo. Match the surrounding
-  style.
+- **Perl 5.42 (`use v5.42;`)** — the version baseline. `use v5.42` already turns
+  on `strict`, `warnings`, signatures, `say`, postfix deref, `try`/`catch`,
+  for-list, and chained comparisons, so files don't repeat those pragmas. It also
+  enables `source::encoding "ascii"`, so **keep source ASCII** (no Unicode in
+  comments/strings — use `--`, `->`, etc.). The native `class` feature
+  (`field`/`method`/`ADJUST`, `:param`, `:reader`) still needs
+  `use experimental qw(class)`; Drv also needs `multidimensional` for
+  Regexp::Common's `$RE{balanced}{-parens=>'[]'}`. Trivial field accessors use
+  `field $x :param :reader;` rather than hand-written methods. Not Moose/Moo.
 - **In-place edits must match exactly once.** `update_inplace` substitutes the
   old derivation block for the new one and *dies if the match count isn't 1*.
   This is a safety invariant — don't loosen it.

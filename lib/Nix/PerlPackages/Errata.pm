@@ -1,8 +1,6 @@
 package Nix::PerlPackages::Errata;
 
-use v5.38;
-use strict;
-use warnings;
+use v5.42;
 use Exporter 'import';
 use File::Basename qw(dirname);
 use CPAN::Meta::YAML;

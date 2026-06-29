@@ -12,6 +12,9 @@ pkgs.mkShell {
       # PLAN.ng.md D2.
       pkgs.nixfmt
       pkgs.git
+      # perlcritic: CI lints nix-cpan.pl with it; keep it in the dev shell so the
+      # same check is runnable locally.
+      pkgs.perlPackages.PerlCritic
     ]
     ++ import ./perl-deps.nix { inherit pkgs; };
 }

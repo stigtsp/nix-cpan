@@ -1,7 +1,6 @@
 package Nix::Util;
 
-use v5.38;
-use feature qw(signatures);
+use v5.42;
 use Exporter qw(import);
 use MIME::Base64;
 use Log::Log4perl qw(:easy);
