@@ -5,7 +5,18 @@ use Exporter qw(import);
 use MIME::Base64;
 use Log::Log4perl qw(:easy);
 
-our @EXPORT_OK = qw(sha256_hex_to_sri distro_name_to_attr license_map render_license attr_is_reserved mask_nix_line brace_delta);
+our @EXPORT_OK = qw(sha256_hex_to_sri distro_name_to_attr license_map render_license attr_is_reserved mask_nix_line brace_delta normalize_description);
+
+# Turn a CPAN abstract into a nixpkgs-style meta.description: single-spaced,
+# trimmed, no trailing period, and capitalized first letter (nixpkgs convention).
+# Shared by the stanza generator and the in-place meta refresh so they agree.
+sub normalize_description ($desc) {
+    return $desc unless defined $desc;
+    $desc =~ s/\s+/ /g;                 # collapse whitespace (incl. newlines)
+    $desc = builtin::trim($desc);
+    $desc =~ s/\.\z//;                  # nixpkgs descriptions have no trailing period
+    return ucfirst $desc;              # ... and start with a capital
+}
 
 # Blank out the contents of strings and comments on a single Nix line so that
 # brace counting (and attribute matching) is not fooled by `{`/`}`/`#` inside

@@ -2,7 +2,13 @@ use v5.38;
 use Test::More;
 use MIME::Base64 qw(encode_base64 decode_base64);
 
-use_ok("Nix::Util", qw(sha256_hex_to_sri distro_name_to_attr license_map render_license));
+use_ok("Nix::Util", qw(sha256_hex_to_sri distro_name_to_attr license_map render_license normalize_description));
+
+is(normalize_description("recursively copy Perl datatypes."), "Recursively copy Perl datatypes",
+   "normalize_description: capitalize + strip trailing period");
+is(normalize_description("  collapse\n  the   spaces  "), "Collapse the spaces",
+   "normalize_description: collapse whitespace + trim");
+is(normalize_description(undef), undef, "normalize_description: undef passes through");
 
 is(sha256_hex_to_sri("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),"sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=");
 

@@ -98,8 +98,8 @@ like($new_nix, qr/MissingDep\s*=\s*buildPerlPackage.*?pname = "Missing-Dep";.*?v
      "generated missing stanza uses pname/version instead of legacy name");
 like($new_nix, qr/MissingDep\s*=\s*buildPerlPackage.*?meta\s*=\s*\{/s,
      "generated missing stanza includes meta block");
-like($new_nix, qr/MissingDep\s*=\s*buildPerlPackage.*?description = "a useful dependency";/s,
-     "generated missing stanza includes normalized description");
+like($new_nix, qr/MissingDep\s*=\s*buildPerlPackage.*?description = "A useful dependency";/s,
+     "generated missing stanza includes normalized description (capitalized, period-stripped)");
 like($new_nix, qr/MissingDep\s*=\s*buildPerlPackage.*?homepage = "https:\/\/metacpan\.org\/release\/Missing-Dep";/s,
      "generated missing stanza includes homepage");
 like($new_nix, qr/MissingDep\s*=\s*buildPerlPackage.*?license = with lib\.licenses; \[ artistic1 gpl1Plus \];/s,

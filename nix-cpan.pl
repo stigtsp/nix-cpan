@@ -21,7 +21,7 @@ use Nix::PerlPackages::Errata::Audit qw(
   commented_dist_blocks
 );
 use Nix::PerlPackages::Errata::Suggest qw(suggest_from_log add_errata_entries parse_missing_modules);
-use Nix::Util qw(sha256_hex_to_sri render_license);
+use Nix::Util qw(sha256_hex_to_sri render_license normalize_description);
 use Text::Diff ();
 use IPC::Cmd qw(run);
 
@@ -325,11 +325,7 @@ sub render_generated_drv ($app, $release) {
   my $description = $release->abstract;
   my $license = render_license($release->license);
 
-  if (defined $description) {
-    $description =~ s/\s+/ /g;          # collapse all whitespace (incl. newlines)
-    $description = builtin::trim($description);
-    $description =~ s/\.$//;
-  }
+  $description = normalize_description($description);
   if (defined $homepage) {
     $homepage = builtin::trim($homepage);
   }

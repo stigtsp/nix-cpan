@@ -4,7 +4,7 @@ use experimental qw(class multidimensional);
 
 class Nix::PerlPackages::Drv {
   use Log::Log4perl qw(:easy);
-  use Nix::Util qw(sha256_hex_to_sri distro_name_to_attr);
+  use Nix::Util qw(sha256_hex_to_sri distro_name_to_attr normalize_description);
   use Regexp::Common;
   use Perl6::Junction qw(any);
 
@@ -265,23 +265,61 @@ class Nix::PerlPackages::Drv {
     $self->_set_src_or_top_attr($hash_attr, $hash_attr eq "sha256" ? $checksum : $hash);
 
     $self->_merge_inputs_from_mc($mc);
+    $self->_update_meta_from_mc($mc);
   }
 
   method update_deps_from_metacpan ($mc) {
     $self->_merge_inputs_from_mc($mc);
   }
 
+  # Refresh the factual meta fields (description, homepage) from upstream so a
+  # bump carries them in the same commit. license is intentionally NOT touched:
+  # MetaCPAN license data is unreliable and a build cannot verify a license, so
+  # auto-overwriting would risk silently reverting a hand-corrected nixpkgs
+  # license. Only fields the derivation already has are updated (we never add new
+  # meta fields).
+  method _update_meta_from_mc ($mc) {
+    if ($mc->can("abstract")) {
+      my $desc = normalize_description($mc->abstract);
+      $self->_update_meta_attr("description", $desc) if defined $desc;
+    }
+    if ($mc->can("homepage")) {
+      my $hp = $mc->homepage;
+      $self->_update_meta_attr("homepage", builtin::trim($hp)) if defined $hp;
+    }
+  }
+
+  # Update an existing single-line meta string field to $new (raw, unescaped).
+  # No-op if the field is absent, appears more than once, is multi-line, or is
+  # already equal -- so it only ever rewrites one clear, existing value.
+  method _update_meta_attr ($attr, $new) {
+    return unless defined $new && length $new;
+    my $cur = eval { $self->get_attr($attr) };   # undef if absent; dies if >1
+    return unless defined $cur;
+    (my $esc = $new) =~ s/\\/\\\\/g;
+    $esc =~ s/"/\\"/g;
+    return if $esc eq $cur;
+    $self->set_attr($attr, $esc);
+  }
+
   # Sync buildInputs/propagatedBuildInputs to MetaCPAN's resolved deps, keeping
   # any pkgs.* entries already present in the derivation (those come from nixpkgs,
   # not CPAN metadata, so MetaCPAN can't know about them).
+  #
+  # buildInputs excludes anything already in propagatedBuildInputs: a propagated
+  # dep is available at build time too, so listing it in both is redundant and not
+  # idiomatic in nixpkgs. (Some distros declare a dep in both a build/test phase
+  # and runtime; without this it would land in both lists.)
   method _merge_inputs_from_mc ($mc) {
-    for my $spec (["buildInputs", "build_inputs"],
-                  ["propagatedBuildInputs", "propagated_build_inputs"]) {
-      my ($nix_attr, $method) = @$spec;
-      my @inputs = $mc->$method();
-      push @inputs, grep { /^pkgs\./ } $self->$method();
-      $self->set_or_add_attr_list($nix_attr, @inputs);
-    }
+    my @propagated = $mc->propagated_build_inputs();
+    my %is_propagated = map { $_ => 1 } @propagated;
+
+    my @build = grep { !$is_propagated{$_} } $mc->build_inputs();
+    push @build, grep { /^pkgs\./ } $self->build_inputs();
+    $self->set_or_add_attr_list("buildInputs", @build);
+
+    push @propagated, grep { /^pkgs\./ } $self->propagated_build_inputs();
+    $self->set_or_add_attr_list("propagatedBuildInputs", @propagated);
   }
 
   method git_message {
