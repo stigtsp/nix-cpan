@@ -3,7 +3,6 @@ package Nix::Util;
 use v5.38;
 use feature qw(signatures);
 use Exporter qw(import);
-use Smart::Comments -ENV;
 use MIME::Base64;
 use Log::Log4perl qw(:easy);
 
@@ -302,7 +301,6 @@ sub render_license {
     # Whether the license is available inside `lib.licenses`.
     my $in_set = 1;
 
-    ### lookup: $cpan_license
 
     my $nix_license = license_map($cpan_license);
     if ( !$nix_license ) {

@@ -279,10 +279,10 @@ Design around the loop's asymmetry — bake these into the tooling:
   across all 456 update candidates produced **no resolution failures**, so the
   staleness is likely *wrong/obsolete* entries (inject wrong deps, or no longer
   needed) rather than missing resolutions that crash. Pruning needs the build loop.
-- **#6 (2026-06-26) [minor/cosmetic] `--diff` prints "Updating inplace" progress.**
-  `update --diff` (no `--inplace`) still emits the Smart::Comments
-  `### Updating inplace` progress bar (the loop is shared). Harmless but
-  misleading. Low priority.
+- **#6 (2026-06-26) [FIXED] `--diff` printed "Updating inplace" progress.**
+  Resolved by removing Smart::Comments entirely (2026-06-29): the `### Updating
+  inplace` annotation is gone, so `--diff` no longer emits the spurious progress
+  bar. See the Smart::Comments removal note below.
 - **#7 (2026-06-26) [FIXED] version comparison mis-orders dev & scheme-changed
   versions.** `newer_than` used `Sort::Versions::versioncmp` (string-segment),
   giving false "updates": `CatalystPluginAuthentication 0.10_027 -> 0.10026`
@@ -438,9 +438,16 @@ Design around the loop's asymmetry — bake these into the tooling:
   CR2-1). Flake package + dev shell rebuild green.
 
 Not changed (documented): CR2-6 src-block readers are line-anchored (silent skip
-on non-canonical src — does not occur in nixfmt-canonical nixpkgs); `Smart::Comments`
-is cosmetic-only but is a source filter across 4 files and removing it changes the
-progress-bar UX — left as an optional future slim.
+on non-canonical src — does not occur in nixfmt-canonical nixpkgs).
+
+**Smart::Comments removed (2026-06-29):** dropped the source-filter dep from all 4
+files and from perl-deps.nix. The two debug `###` annotations (get_attr_list,
+license lookup) were deleted; the noisy `### Updating inplace` progress bar is gone
+(fixes #6); the genuinely-useful download progress in `download_releases` is now
+periodic `INFO` logging ("Downloaded N/total releases" every 2000). Six runtime
+Perl deps now dropped in total (Mojolicious, HTTP::Tiny::Cache, File::Util::Tempdir,
+Math::BigInt, Smart::Comments + the already-core ones). Suite green (278); flake
+build + store-binary run verified.
 
 ## Open questions
 

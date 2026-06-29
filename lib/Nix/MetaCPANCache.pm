@@ -12,7 +12,6 @@ class Nix::MetaCPANCache {
   use IO::Zlib qw(:gzip_external 1);
   use IO::Uncompress::Gunzip qw(gunzip $GunzipError);
   use Log::Log4perl qw(:easy);
-  use Smart::Comments;
   use File::Basename qw(basename);
   use File::XDG;
 
@@ -172,11 +171,13 @@ class Nix::MetaCPANCache {
     });
     my @releases;
     my $total = $release_results->total;
-    # This foreach is made so Smart::Comments understand progress :)
-    foreach ( 1..$total ) { ### Downloading $total releases [===|    ] % done
+    INFO("Downloading $total releases from MetaCPAN");
+    foreach my $n (1..$total) {
       my $release = $release_results->next;
       push @releases, $release->{data};
+      INFO("Downloaded $n/$total releases") if $n % 2000 == 0;
     }
+    INFO("Downloaded $total releases");
     return [ @releases ];
   }
 

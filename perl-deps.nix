@@ -70,7 +70,6 @@ with pp;
   MetaCPANClient
   Perl6Junction
   RegexpCommon
-  SmartComments
   SortVersions
   TextDiff
 ]

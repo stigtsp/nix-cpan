@@ -8,7 +8,6 @@ use strict;
 use warnings;
 use Array::Diff;
 use Log::Log4perl qw(:easy);
-use Smart::Comments;
 use File::Basename;
 use Perl6::Junction qw(any);
 use lib qw(lib);
@@ -1055,7 +1054,7 @@ sub command_update ($app, @attrs) {
   }
 
   my %missing_added;
-  foreach my $d (@updated) { ### Updating inplace [===|    ] % done
+  foreach my $d (@updated) {
     my @missing_for_update = ();
     if ($app->missing) {
       foreach my $attr (sort keys %$missing_to_add) {

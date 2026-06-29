@@ -7,7 +7,6 @@ class Nix::PerlPackages::Drv {
   use Nix::Util qw(sha256_hex_to_sri distro_name_to_attr);
   use Regexp::Common;
   use Perl6::Junction qw(any);
-  use Smart::Comments -ENV;
 
   field $prepart        :param;
   field $attrname       :param;
@@ -60,7 +59,6 @@ class Nix::PerlPackages::Drv {
   }
 
   method get_attr_list ($attr, $str=$part) {
-    ### get_attr_list text: $text
     # Grab the first balanced `[ ... ]` after `attr =`. Do NOT require a `;`
     # immediately after it: for the conditional form `[ base ] ++ lib.optionals
     # ... [ extra ];` that would fail and (wrongly) return an empty list, which
@@ -74,7 +72,6 @@ class Nix::PerlPackages::Drv {
     return unless $val;
 
     my @ret = grep { !/^[\[\]]$/ } split(/\s+/, $val);
-    ### get_attr_list: @ret
     @ret = sort @ret;
     return @ret;
   }
