@@ -17,33 +17,33 @@ Re-run `refresh` whenever you want fresher data.
 
 ## Examples
 
-`--nix-file` points at a nixpkgs checkout (default:
-`pkgs/top-level/perl-packages.nix`). The examples use a shell variable for it:
+`--nix-file` is the `perl-packages.nix` in your nixpkgs checkout. The examples
+set it once and alias the tool:
 
 ```sh
-NF=~/nixpkgs/pkgs/top-level/perl-packages.nix
+perl_packages=~/nixpkgs/pkgs/top-level/perl-packages.nix
 alias nix-cpan='nix run github:stigtsp/nix-cpan --'
 ```
 
 ```sh
 # What's outdated, bucketed by risk (safe / moderate / high)
-nix-cpan compare --report --nix-file $NF
+nix-cpan compare --report --nix-file "$perl_packages"
 
 # Preview one bump without touching anything
-nix-cpan update --diff Mojolicious --nix-file $NF
+nix-cpan update --diff Mojolicious --nix-file "$perl_packages"
 
 # Bump every package with no dependency changes, build each, commit the ones
 # that pass (skips/reverts the rest):
-nix-cpan auto --risk safe --commit --nix-file $NF
+nix-cpan auto --risk safe --commit --nix-file "$perl_packages"
 
 # Include packages with small dependency changes too:
-nix-cpan auto --risk moderate --commit --nix-file $NF
+nix-cpan auto --risk moderate --commit --nix-file "$perl_packages"
 
 # Dry run (verify, don't commit) and write a YAML report:
-nix-cpan auto --risk safe --report-file report.yaml --nix-file $NF
+nix-cpan auto --risk safe --report-file report.yaml --nix-file "$perl_packages"
 
 # Generate stanzas for dependencies nixpkgs doesn't have yet:
-nix-cpan generate_missing --inplace --nix-file $NF
+nix-cpan generate_missing --inplace --nix-file "$perl_packages"
 
 # Audit the errata file against the cache; --prune removes the provably-redundant
 # (uncommented) entries:
@@ -51,7 +51,7 @@ nix-cpan errata
 nix-cpan errata --prune
 
 # A build failed — see which missing module to add to errata:
-nix-cpan diagnose SomePackage --nix-file $NF
+nix-cpan diagnose SomePackage --nix-file "$perl_packages"
 ```
 
 `auto` is build-gated: it never commits a bump that fails to build, never leaves
