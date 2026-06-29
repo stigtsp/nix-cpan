@@ -17,41 +17,37 @@ Re-run `refresh` whenever you want fresher data.
 
 ## Examples
 
-`--nix-file` is the `perl-packages.nix` in your nixpkgs checkout. The examples
-set it once and alias the tool:
+Run from the root of your nixpkgs checkout; it defaults to
+`pkgs/top-level/perl-packages.nix` (use `--nix-file PATH` for a different one).
 
 ```sh
-perl_packages=~/nixpkgs/pkgs/top-level/perl-packages.nix
+cd ~/nixpkgs
 alias nix-cpan='nix run github:stigtsp/nix-cpan --'
-```
 
-```sh
 # What's outdated, bucketed by risk (safe / moderate / high)
-nix-cpan compare --report --nix-file "$perl_packages"
+nix-cpan compare --report
 
 # Preview one bump without touching anything
-nix-cpan update --diff Mojolicious --nix-file "$perl_packages"
+nix-cpan update --diff Mojolicious
 
 # Bump every package with no dependency changes, build each, commit the ones
 # that pass (skips/reverts the rest):
-nix-cpan auto --risk safe --commit --nix-file "$perl_packages"
+nix-cpan auto --risk safe --commit
 
 # Include packages with small dependency changes too:
-nix-cpan auto --risk moderate --commit --nix-file "$perl_packages"
+nix-cpan auto --risk moderate --commit
 
 # Dry run (verify, don't commit) and write a YAML report:
-nix-cpan auto --risk safe --report-file report.yaml --nix-file "$perl_packages"
+nix-cpan auto --risk safe --report-file report.yaml
 
 # Generate stanzas for dependencies nixpkgs doesn't have yet:
-nix-cpan generate_missing --inplace --nix-file "$perl_packages"
+nix-cpan generate_missing --inplace
 
-# Audit the errata file against the cache; --prune removes the provably-redundant
-# (uncommented) entries:
+# Audit the errata against the cache:
 nix-cpan errata
-nix-cpan errata --prune
 
 # A build failed — see which missing module to add to errata:
-nix-cpan diagnose SomePackage --nix-file "$perl_packages"
+nix-cpan diagnose SomePackage
 ```
 
 `auto` is build-gated: it never commits a bump that fails to build, never leaves

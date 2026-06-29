@@ -708,11 +708,12 @@ sub prune_errata_entries ($app, $to_remove) {
 
 sub nixpkgs_root ($app) {
   my $f = $app->nix_file;
-  my $suffix = "/pkgs/top-level/perl-packages.nix";
-  if (length($f) >= length($suffix) && substr($f, -length($suffix)) eq $suffix) {
-    return substr($f, 0, length($f) - length($suffix));
-  }
-  return;
+  # Accept .../pkgs/top-level/perl-packages.nix, absolute or relative. The nixpkgs
+  # root is whatever precedes it; for the bare relative default that's the current
+  # directory (so `auto` works run from the root of a nixpkgs checkout).
+  return unless $f =~ m{(?:^|/)pkgs/top-level/perl-packages\.nix\z};
+  (my $root = $f) =~ s{/?pkgs/top-level/perl-packages\.nix\z}{};
+  return length($root) ? $root : ".";
 }
 
 sub command_diagnose ($app, @attrs) {
