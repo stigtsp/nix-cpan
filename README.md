@@ -5,8 +5,6 @@ A mechanical updater for the Perl package set in nixpkgs
 MetaCPAN mirror and rewrites version / source / hash / dependencies / description,
 build-gating each change and committing one package per commit.
 
-No AI/LLM at runtime — it's deterministic Perl.
-
 ## Setup
 
 Build the local MetaCPAN cache once (slow; downloads CPAN release data):
