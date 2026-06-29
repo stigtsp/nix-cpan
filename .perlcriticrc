@@ -1,0 +1,7 @@
+# Perl::Critic config for nix-cpan (CI lints nix-cpan.pl with it).
+
+# The codebase uses Perl signatures pervasively (`sub f ($x, @rest) { ... }`,
+# enabled by `use v5.42`). This Perl::Critic version parses a signature as a
+# subroutine prototype and flags every one — a false positive. We never use real
+# prototypes, so disable the policy rather than litter the code with `## no critic`.
+[-Subroutines::ProhibitSubroutinePrototypes]

@@ -334,7 +334,7 @@ sub render_generated_drv ($app, $release) {
     $homepage = builtin::trim($homepage);
   }
   my $esc = sub ($s) {
-    return undef unless defined $s;
+    return unless defined $s;   # called in scalar context, so undef
     $s =~ s/\\/\\\\/g;
     $s =~ s/"/\\"/g;
     return $s;
