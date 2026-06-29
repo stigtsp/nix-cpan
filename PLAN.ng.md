@@ -271,9 +271,13 @@ Design around the loop's asymmetry — bake these into the tooling:
 - **#3 (2026-06-26) [open] combined missing-deps commit.** nix-cpan.pl ~600-622
   emits `perlPackages: add remaining missing deps` as one commit — violates D4
   per-package `init at V` commits.
-- **#4 (2026-06-26) [open] meta not updated on bump.** `update_from_metacpan`
-  updates version/url/hash + dep lists but not `meta` (license/description/
-  homepage). User requires these in the same commit. Needs a meta-update path.
+- **#4 (2026-06-26) [FIXED 2026-06-29] meta not updated on bump.**
+  `update_from_metacpan` now refreshes `description` + `homepage` from upstream in
+  the same commit (only fields that already exist; via shared
+  `Nix::Util::normalize_description` so descriptions are nixpkgs-style and don't
+  churn on a lowercase upstream abstract). **license deliberately NOT auto-updated**
+  (MetaCPAN license data is unreliable + unverifiable by build → would silently
+  revert hand-corrected licenses); per user, left to humans. Commit a4a5101, t/25.
 - **#5 (2026-06-26) [open] errata stale.** `Errata.yaml` inherited from cpan2nix,
   known outdated. To be managed via the build loop above. Note: `compare --report`
   across all 456 update candidates produced **no resolution failures**, so the
@@ -354,13 +358,12 @@ Design around the loop's asymmetry — bake these into the tooling:
   (sufficiency/minimality asymmetry), so `diagnose` only ever infers build-bucket
   errata. Add-then-rebuild-green on a real metadata-misses case is future work.
 
-- **#15 (2026-06-27) [open, dep classification] buildInputs == propagatedBuildInputs
-  after some updates.** Updating AppMusicChordPro produced identical build and
-  propagated lists. Likely the distro's metadata lists the same modules across
-  multiple phases, so `build_inputs()` (build/test/configure) and
-  `propagated_build_inputs()` (runtime) overlap fully. Pre-existing behavior (not
-  from the conditional-list or generate work). Worth a look: should a runtime dep
-  be excluded from buildInputs when it's already propagated? Low priority.
+- **#15 (2026-06-27) [FIXED 2026-06-29] buildInputs == propagatedBuildInputs after
+  some updates.** Confirmed metadata-real: a distro (e.g. App-Music-ChordPro) can
+  declare a dep in both a build/test phase and runtime, so it landed in both lists.
+  Fixed: `_merge_inputs_from_mc` now subtracts propagated deps from buildInputs (a
+  propagated dep is available at build time anyway). Most packages were already
+  disjoint (DateTimeTimeZone). Commit a4a5101, t/25.
 - **#16 (2026-06-27) [FIXED] generate_missing --out wrote an unparseable
   fragment.** It ran nixfmt on a bare set of bindings (no enclosing `{}`) →
   nixfmt parse error, exit 255. Fixed (04f1629): --out skips nixfmt and emits an
