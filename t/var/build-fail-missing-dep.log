@@ -1,0 +1,4 @@
+Building Array-Compare...
+t/test.t .......... Can't locate Test/NoWarnings.pm in @INC (you may need to install the Test::NoWarnings module) (@INC entries checked: ...) at t/test.t line 4.
+BEGIN failed--compilation aborted at t/test.t line 4.
+Result: FAIL

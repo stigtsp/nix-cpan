@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1-}" == "--version" ]]; then
+  echo "nixfmt (test stub)"
+  exit 0
+fi
+
+if [[ "$#" -ne 1 ]]; then
+  echo "usage: nixfmt <file>" >&2
+  exit 1
+fi
+
+file="$1"
+if [[ ! -f "$file" ]]; then
+  echo "nixfmt: file not found: $file" >&2
+  exit 1
+fi
+
+# Test stub: intentionally no-op.
+exit 0

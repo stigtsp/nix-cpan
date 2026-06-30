@@ -20783,10 +20783,10 @@ with self; {
       url = "mirror://cpan/authors/id/R/RR/RRA/podlators-4.14.tar.gz";
       hash = "sha256-evHEHeNLLk2/9wCinXOHVJwrbPFhQiFEUMkkcH3bD4I=";
     };
-    # preCheck = ''
-    #   # remove failing spdx check
-    #   rm t/docs/spdx-license.t
-    # '';
+    preCheck = ''
+      # remove failing spdx check
+      rm t/docs/spdx-license.t
+    '';
     meta = {
       description = "Convert POD data to various other formats";
       homepage = "https://www.eyrie.org/~eagle/software/podlators";

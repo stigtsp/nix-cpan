@@ -1,14 +1,16 @@
 use v5.38;
 use Test::More;
 use Data::Dumper;
+use File::Temp qw(tempdir);
 
 
 use_ok("Nix::MetaCPANCache");
 use_ok("Nix::Util", qw(distro_name_to_attr));
-my $db_test_file = '/var/tmp/metacpan-cache-test.db';
+my $tmpdir = tempdir(CLEANUP => 1);
+my $db_test_file = "$tmpdir/metacpan-cache-test.db";
 
 my $mcc = new_ok( "Nix::MetaCPANCache" => [ cache_file => 't/var/metacpan-download-cache.jsonl.gz',
-                                            db_file    => '/var/tmp/metacpan-cache-test.db' ],
+                                            db_file    => $db_test_file ],
                   "Nix::MetaCPANCache" );
 
 

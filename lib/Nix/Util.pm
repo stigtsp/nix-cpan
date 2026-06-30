@@ -1,18 +1,131 @@
 package Nix::Util;
 
-use v5.38;
-use feature qw(signatures);
+use v5.42;
 use Exporter qw(import);
-use Math::BigInt;
-use Smart::Comments -ENV;
 use MIME::Base64;
 use Log::Log4perl qw(:easy);
 
-our @EXPORT_OK = qw(sha256_hex_to_sri distro_name_to_attr license_map render_license attr_is_reserved);
+our @EXPORT_OK = qw(sha256_hex_to_sri distro_name_to_attr license_map render_license attr_is_reserved mask_nix_line brace_delta normalize_description);
+
+# Turn a CPAN abstract into a nixpkgs-style meta.description: single-spaced,
+# trimmed, no trailing period, and capitalized first letter (nixpkgs convention).
+# Shared by the stanza generator and the in-place meta refresh so they agree.
+sub normalize_description ($desc) {
+    return $desc unless defined $desc;
+    $desc =~ s/\s+/ /g;                 # collapse whitespace (incl. newlines)
+    $desc = builtin::trim($desc);
+    $desc =~ s/\.\z//;                  # nixpkgs descriptions have no trailing period
+    return ucfirst $desc;              # ... and start with a capital
+}
+
+# Blank out the contents of strings and comments on a single Nix line so that
+# brace counting (and attribute matching) is not fooled by `{`/`}`/`#` inside
+# string or comment text. $state is a hashref carrying multi-line context
+# (in_block_comment / in_dquote / in_squote) and is mutated in place across
+# successive lines. Single source of truth shared by the parser (PerlPackages)
+# and the per-derivation editor (Drv).
+sub mask_nix_line ($line, $st) {
+    my $out = "";
+    my $i = 0;
+    my $len = length($line);
+
+    while ($i < $len) {
+      my $c = substr($line, $i, 1);
+      my $two = ($i + 1 < $len) ? substr($line, $i, 2) : "";
+
+      if ($st->{in_block_comment}) {
+        if ($two eq "*/") {
+          $out .= "  ";
+          $i += 2;
+          $st->{in_block_comment} = 0;
+        } else {
+          $out .= " ";
+          $i++;
+        }
+        next;
+      }
+
+      if ($st->{in_dquote}) {
+        if ($c eq "\\" && $i + 1 < $len) {
+          $out .= "  ";
+          $i += 2;
+        } elsif ($c eq "\"") {
+          $out .= " ";
+          $i++;
+          $st->{in_dquote} = 0;
+        } else {
+          $out .= " ";
+          $i++;
+        }
+        next;
+      }
+
+      if ($st->{in_squote}) {
+        if ($two eq "''") {
+          my $next = ($i + 2 < $len) ? substr($line, $i + 2, 1) : "";
+          # In indented strings, ''${...} and '''' are escapes, not terminators.
+          if ($next eq '$' || $next eq "'") {
+            $out .= "  ";
+            $i += 2;
+          } else {
+            $out .= "  ";
+            $i += 2;
+            $st->{in_squote} = 0;
+          }
+        } else {
+          $out .= " ";
+          $i++;
+        }
+        next;
+      }
+
+      if ($two eq "/*") {
+        $out .= "  ";
+        $i += 2;
+        $st->{in_block_comment} = 1;
+        next;
+      }
+
+      if ($two eq "''") {
+        $out .= "  ";
+        $i += 2;
+        $st->{in_squote} = 1;
+        next;
+      }
+
+      if ($c eq "\"") {
+        $out .= " ";
+        $i++;
+        $st->{in_dquote} = 1;
+        next;
+      }
+
+      if ($c eq "#") {
+        $out .= " " x ($len - $i);
+        last;
+      }
+
+      $out .= $c;
+      $i++;
+    }
+
+    return $out;
+}
+
+sub brace_delta ($line) {
+    my $open_cnt = () = ($line =~ /\{/g);
+    my $close_cnt = () = ($line =~ /\}/g);
+    return $open_cnt - $close_cnt;
+}
 
 sub sha256_hex_to_sri ($hex) {
-    my $num = Math::BigInt->new("0x$hex")->to_bytes();
-    return "sha256-" . encode_base64( $num, "" );
+    die "sha256_hex_to_sri: requires a non-empty hex string" unless defined $hex && length $hex;
+    die "sha256_hex_to_sri: expected 64 hex chars, got '$hex'"
+      unless $hex =~ /\A[0-9a-fA-F]{64}\z/;
+    # pack the hex straight to its 32 raw bytes. (Math::BigInt->to_bytes was wrong:
+    # it strips leading zero bytes, so a digest beginning "00.." encoded to 31
+    # bytes and a wrong, too-short SRI for ~1/256 of releases.)
+    return "sha256-" . encode_base64( pack( "H*", $hex ), "" );
 }
 
 sub distro_name_to_attr ($distro) {
@@ -198,7 +311,6 @@ sub render_license {
     # Whether the license is available inside `lib.licenses`.
     my $in_set = 1;
 
-    ### lookup: $cpan_license
 
     my $nix_license = license_map($cpan_license);
     if ( !$nix_license ) {
@@ -235,8 +347,8 @@ sub render_license {
         }
     }
 
-    INFO("license: $cpan_license");
-    WARN("License '$cpan_license' is ambiguous, please verify") if $amb;
+    DEBUG("license: $cpan_license");
+    DEBUG("License '$cpan_license' is ambiguous, please verify") if $amb;
     return $license_line;
 }
 

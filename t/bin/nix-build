@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Test stub for nix-build: succeeds for any -A target, printing a fake store
+# path. The auto updater's failure path is exercised via NIX_CPAN_FORCE_BUILD_FAIL
+# (which short-circuits before nix-build is invoked), so this stub only needs to
+# represent a passing build gate.
+echo "/nix/store/0000000000000000000000000000000-test-stub"
+exit 0
